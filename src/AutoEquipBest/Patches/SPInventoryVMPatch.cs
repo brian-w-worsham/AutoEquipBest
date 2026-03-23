@@ -21,10 +21,18 @@ namespace AutoEquipBest.Patches
     {
         private static SPInventoryMixin _currentMixin;
         private static GauntletLayer _overlayLayer;
-        private static GauntletMovieIdentifier _overlayMovie;
 
+        /// <summary>
+        /// Gets the currently active inventory mixin instance, if one is attached.
+        /// </summary>
         public static SPInventoryMixin CurrentMixin => _currentMixin;
 
+        /// <summary>
+        /// Harmony postfix for <c>SPInventoryVM.RefreshInformationValues</c>.
+        /// Marks the inventory as open for hotkey handling and ensures the
+        /// Auto Equip Best button overlay is attached to the active inventory VM.
+        /// </summary>
+        /// <param name="__instance">The inventory ViewModel instance being refreshed.</param>
         [HarmonyPostfix]
         public static void Postfix(SPInventoryVM __instance)
         {
@@ -35,11 +43,15 @@ namespace AutoEquipBest.Patches
             if (_currentMixin == null || _currentMixin.InventoryVM != __instance)
             {
                 _currentMixin = new SPInventoryMixin(__instance);
-                AddButtonLayer(__instance);
+                AddButtonLayer();
             }
         }
 
-        private static void AddButtonLayer(SPInventoryVM inventoryVM)
+        /// <summary>
+        /// Creates and attaches the Auto Equip Best overlay layer and button movie
+        /// to the current top screen.
+        /// </summary>
+        private static void AddButtonLayer()
         {
             try
             {
@@ -52,7 +64,7 @@ namespace AutoEquipBest.Patches
 
                 _overlayLayer = new GauntletLayer("AutoEquipOverlay", 200, false);
                 _overlayLayer.InputRestrictions.SetInputRestrictions(true, InputUsageMask.Mouse);
-                _overlayMovie = _overlayLayer.LoadMovie("AutoEquipBestButton", _currentMixin);
+                _overlayLayer.LoadMovie("AutoEquipBestButton", _currentMixin);
                 screen.AddLayer(_overlayLayer);
 
                 // Wire up click handler programmatically as a reliable fallback
@@ -65,6 +77,10 @@ namespace AutoEquipBest.Patches
             }
         }
 
+        /// <summary>
+        /// Wires the button click handler programmatically as a fallback when
+        /// declarative binding does not attach reliably.
+        /// </summary>
         private static void WireButtonClickHandler()
         {
             try
@@ -97,6 +113,10 @@ namespace AutoEquipBest.Patches
             }
         }
 
+        /// <summary>
+        /// Removes the overlay layer from the current top screen and clears
+        /// the stored layer reference.
+        /// </summary>
         public static void RemoveLayer()
         {
             if (_overlayLayer != null)
@@ -106,12 +126,19 @@ namespace AutoEquipBest.Patches
                     var screen = ScreenManager.TopScreen;
                     screen?.RemoveLayer(_overlayLayer);
                 }
-                catch { }
+                catch (System.Exception)
+                {
+                    // Screen/layer teardown can race during UI transitions; ignoring
+                    // this is safe because we still clear local references below.
+                }
                 _overlayLayer = null;
-                _overlayMovie = null;
             }
         }
 
+        /// <summary>
+        /// Cleans up patch state when inventory context is no longer active.
+        /// Resets hotkey listener state, removes overlay UI, and drops mixin reference.
+        /// </summary>
         public static void Cleanup()
         {
             InventoryScreenHotkeyListener.IsInventoryOpen = false;
