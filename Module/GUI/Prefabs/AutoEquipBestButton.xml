@@ -1,0 +1,26 @@
+<Prefab>
+  <Window>
+    <Widget DoNotAcceptEvents="false" DoNotPassEventsToChildren="false"
+            WidthSizePolicy="Fixed" HeightSizePolicy="Fixed"
+            SuggestedWidth="250" SuggestedHeight="50"
+            HorizontalAlignment="Right" VerticalAlignment="Top"
+            MarginTop="10" MarginRight="30">
+
+      <Children>
+        <ButtonWidget DoNotPassEventsToChildren="false"
+                      WidthSizePolicy="StretchToParent" HeightSizePolicy="StretchToParent"
+                      Brush="ButtonBrush"
+                      Command.Click="ExecuteAutoEquipBest"
+                      UpdateChildrenStates="true">
+          <Children>
+            <TextWidget WidthSizePolicy="StretchToParent" HeightSizePolicy="StretchToParent"
+                        Brush="ButtonBrush"
+                        Text="Auto Equip Best"
+                        HorizontalAlignment="Center" VerticalAlignment="Center" />
+          </Children>
+        </ButtonWidget>
+      </Children>
+
+    </Widget>
+  </Window>
+</Prefab>
