@@ -1,6 +1,9 @@
+using System.Collections.Generic;
+using System.Reflection;
 using HarmonyLib;
 using TaleWorlds.CampaignSystem.ViewModelCollection.Inventory;
 using TaleWorlds.Engine.GauntletUI;
+using TaleWorlds.GauntletUI.BaseTypes;
 using TaleWorlds.Library;
 using TaleWorlds.ScreenSystem;
 
@@ -51,11 +54,46 @@ namespace AutoEquipBest.Patches
                 _overlayLayer.InputRestrictions.SetInputRestrictions(true, InputUsageMask.Mouse);
                 _overlayMovie = _overlayLayer.LoadMovie("AutoEquipBestButton", _currentMixin);
                 screen.AddLayer(_overlayLayer);
+
+                // Wire up click handler programmatically as a reliable fallback
+                WireButtonClickHandler();
             }
             catch (System.Exception ex)
             {
                 InformationManager.DisplayMessage(
                     new InformationMessage($"AutoEquipBest button error: {ex.Message}", Colors.Red));
+            }
+        }
+
+        private static void WireButtonClickHandler()
+        {
+            try
+            {
+                var root = _overlayLayer?.UIContext?.Root;
+                if (root == null) return;
+
+                var button = root.GetFirstInChildrenAndThisRecursive(
+                    w => w is ButtonWidget) as ButtonWidget;
+                if (button == null) return;
+
+                // Access the ClickEventHandlers field via reflection
+                var field = typeof(ButtonWidget).GetField("ClickEventHandlers",
+                    BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+                if (field == null) return;
+
+                var handlers = field.GetValue(button) as List<System.Action<Widget>>;
+                if (handlers == null)
+                {
+                    handlers = new List<System.Action<Widget>>();
+                    field.SetValue(button, handlers);
+                }
+
+                handlers.Add(_ => _currentMixin?.ExecuteAutoEquipBest());
+            }
+            catch (System.Exception ex)
+            {
+                InformationManager.DisplayMessage(
+                    new InformationMessage($"AutoEquipBest wire error: {ex.Message}", Colors.Red));
             }
         }
 

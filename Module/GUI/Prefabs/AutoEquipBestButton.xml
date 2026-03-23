@@ -1,6 +1,6 @@
 <Prefab>
   <Window>
-    <Widget DoNotAcceptEvents="false" DoNotPassEventsToChildren="false"
+    <Widget DoNotAcceptEvents="true" DoNotPassEventsToChildren="false"
             WidthSizePolicy="Fixed" HeightSizePolicy="Fixed"
             SuggestedWidth="250" SuggestedHeight="50"
             HorizontalAlignment="Right" VerticalAlignment="Top"
@@ -8,6 +8,7 @@
 
       <Children>
         <ButtonWidget DoNotPassEventsToChildren="false"
+                      DoNotAcceptEvents="false"
                       WidthSizePolicy="StretchToParent" HeightSizePolicy="StretchToParent"
                       Brush="ButtonBrush"
                       Command.Click="ExecuteAutoEquipBest"
@@ -16,6 +17,7 @@
             <TextWidget WidthSizePolicy="StretchToParent" HeightSizePolicy="StretchToParent"
                         Brush="ButtonBrush"
                         Text="Auto Equip Best"
+                        DoNotAcceptEvents="true"
                         HorizontalAlignment="Center" VerticalAlignment="Center" />
           </Children>
         </ButtonWidget>

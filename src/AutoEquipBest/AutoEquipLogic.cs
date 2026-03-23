@@ -1,7 +1,7 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
-using System.Linq;
 using TaleWorlds.CampaignSystem;
+using TaleWorlds.CampaignSystem.Inventory;
 using TaleWorlds.CampaignSystem.Party;
 using TaleWorlds.CampaignSystem.Roster;
 using TaleWorlds.Core;
@@ -12,16 +12,17 @@ using static TaleWorlds.Core.ItemObject;
 namespace AutoEquipBest
 {
     /// <summary>
-    /// Scores inventory items and equips the best armor and weapons on the player character.
+    /// Scores inventory items and equips the best armor and weapons on a character.
     /// </summary>
     public static class AutoEquipLogic
     {
         /// <summary>
-        /// Equip the best available armor and weapons from the player's inventory.
+        /// Equips the best available armor and weapons for the specified hero.
+        /// Uses direct equipment modification (for non-inventory-screen contexts and tests).
         /// </summary>
-        public static void EquipBestItems()
+        /// <param name="hero">The hero whose battle equipment will be upgraded from the party inventory.</param>
+        public static void EquipBestItems(Hero hero)
         {
-            var hero = Hero.MainHero;
             if (hero == null)
                 return;
 
@@ -32,28 +33,410 @@ namespace AutoEquipBest
             var equipment = hero.BattleEquipment;
 
             // --- Armor slots ---
-            EquipBestForSlot(equipment, partyInventory, EquipmentIndex.Head, ItemTypeEnum.HeadArmor);
-            EquipBestForSlot(equipment, partyInventory, EquipmentIndex.Body, ItemTypeEnum.BodyArmor);
-            EquipBestForSlot(equipment, partyInventory, EquipmentIndex.Leg, ItemTypeEnum.LegArmor);
-            EquipBestForSlot(equipment, partyInventory, EquipmentIndex.Gloves, ItemTypeEnum.HandArmor);
-            EquipBestForSlot(equipment, partyInventory, EquipmentIndex.Cape, ItemTypeEnum.Cape);
+            EquipBestForSlot(equipment, partyInventory, EquipmentIndex.Head, ItemTypeEnum.HeadArmor, hero);
+            EquipBestForSlot(equipment, partyInventory, EquipmentIndex.Body, ItemTypeEnum.BodyArmor, hero);
+            EquipBestForSlot(equipment, partyInventory, EquipmentIndex.Leg, ItemTypeEnum.LegArmor, hero);
+            EquipBestForSlot(equipment, partyInventory, EquipmentIndex.Gloves, ItemTypeEnum.HandArmor, hero);
+            EquipBestForSlot(equipment, partyInventory, EquipmentIndex.Cape, ItemTypeEnum.Cape, hero);
 
             // --- Horse ---
-            EquipBestForSlot(equipment, partyInventory, EquipmentIndex.Horse, ItemTypeEnum.Horse);
-            EquipBestForSlot(equipment, partyInventory, EquipmentIndex.HorseHarness, ItemTypeEnum.HorseHarness);
+            EquipBestForSlot(equipment, partyInventory, EquipmentIndex.Horse, ItemTypeEnum.Horse, hero);
+            EquipBestForSlot(equipment, partyInventory, EquipmentIndex.HorseHarness, ItemTypeEnum.HorseHarness, hero);
 
             // --- Weapons (slots 0-3) ---
-            EquipBestWeapons(equipment, partyInventory);
+            EquipBestWeapons(equipment, partyInventory, hero);
 
+            var name = hero.Name?.ToString() ?? "character";
             InformationManager.DisplayMessage(
-                new InformationMessage("Auto-equipped best items!", Colors.Green));
+                new InformationMessage($"Auto-equipped best items for {name}!", Colors.Green));
         }
 
+        /// <summary>
+        /// Equips the best items through the <see cref="InventoryLogic"/> transfer system.
+        /// This properly integrates with the inventory screen state.
+        /// </summary>
+        /// <param name="inventoryLogic">The active inventory logic managing transfer commands.</param>
+        /// <param name="character">The character whose equipment will be upgraded.</param>
+        public static void EquipBestItemsViaInventory(
+            InventoryLogic inventoryLogic, CharacterObject character)
+        {
+            Hero hero = character?.HeroObject;
+            if (hero == null || inventoryLogic == null)
+                return;
+
+            var equipment = hero.BattleEquipment;
+            if (equipment == null)
+                return;
+
+            var playerItems = inventoryLogic.GetElementsInRoster(
+                InventoryLogic.InventorySide.PlayerInventory);
+            if (playerItems == null || playerItems.Count == 0)
+                return;
+
+            // Snapshot available items with remaining amounts
+            var available = new List<(ItemRosterElement element, int remaining)>();
+            for (int i = 0; i < playerItems.Count; i++)
+            {
+                var el = playerItems[i];
+                if (el.Amount > 0 && el.EquipmentElement.Item != null)
+                    available.Add((el, el.Amount));
+            }
+
+            var commands = new List<TransferCommand>();
+
+            // --- Armor + Horse slots ---
+            CollectSlotCommands(commands, available, equipment, character, EquipmentIndex.Head, ItemTypeEnum.HeadArmor, hero);
+            CollectSlotCommands(commands, available, equipment, character, EquipmentIndex.Body, ItemTypeEnum.BodyArmor, hero);
+            CollectSlotCommands(commands, available, equipment, character, EquipmentIndex.Leg, ItemTypeEnum.LegArmor, hero);
+            CollectSlotCommands(commands, available, equipment, character, EquipmentIndex.Gloves, ItemTypeEnum.HandArmor, hero);
+            CollectSlotCommands(commands, available, equipment, character, EquipmentIndex.Cape, ItemTypeEnum.Cape, hero);
+            CollectSlotCommands(commands, available, equipment, character, EquipmentIndex.Horse, ItemTypeEnum.Horse, hero);
+            CollectSlotCommands(commands, available, equipment, character, EquipmentIndex.HorseHarness, ItemTypeEnum.HorseHarness, hero);
+
+            // --- Weapons ---
+            CollectWeaponCommands(commands, available, equipment, character, hero);
+
+            if (commands.Count > 0)
+                inventoryLogic.AddTransferCommands(commands);
+
+            var name = hero.Name?.ToString() ?? "character";
+            InformationManager.DisplayMessage(
+                new InformationMessage($"Auto-equipped best items for {name}!", Colors.Green));
+        }
+
+        /// <summary>
+        /// Builds transfer commands to equip the best item of a given type into a single equipment slot.
+        /// If a better item is found in the available pool, the current item is unequipped first.
+        /// </summary>
+        /// <param name="commands">The list to append generated transfer commands to.</param>
+        /// <param name="available">Snapshot of available inventory items with remaining counts.</param>
+        /// <param name="equipment">The character's current battle equipment.</param>
+        /// <param name="character">The character to generate transfer commands for.</param>
+        /// <param name="slot">The equipment slot to evaluate.</param>
+        /// <param name="itemType">The item type expected in this slot (e.g., HeadArmor, BodyArmor).</param>
+        /// <param name="hero">The hero used for skill-based usability checks.</param>
+        private static void CollectSlotCommands(
+            List<TransferCommand> commands,
+            List<(ItemRosterElement element, int remaining)> available,
+            Equipment equipment,
+            CharacterObject character,
+            EquipmentIndex slot,
+            ItemTypeEnum itemType,
+            Hero hero)
+        {
+            EquipmentElement current = equipment[slot];
+            float currentScore = ScoreItem(current, itemType);
+
+            int bestIdx = -1;
+            float bestScore = currentScore;
+
+            for (int i = 0; i < available.Count; i++)
+            {
+                var (el, remaining) = available[i];
+                if (remaining <= 0) continue;
+
+                ItemObject item = el.EquipmentElement.Item;
+                if (item.ItemType != itemType) continue;
+                if (!CanCharacterUseItem(item, hero)) continue;
+
+                float score = ScoreItem(el.EquipmentElement, itemType);
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    bestIdx = i;
+                }
+            }
+
+            if (bestIdx >= 0)
+            {
+                // Unequip current if occupied
+                if (!current.IsEmpty)
+                {
+                    commands.Add(TransferCommand.Transfer(
+                        1,
+                        InventoryLogic.InventorySide.BattleEquipment,
+                        InventoryLogic.InventorySide.PlayerInventory,
+                        new ItemRosterElement(current, 1),
+                        slot, EquipmentIndex.None, character));
+                }
+
+                // Equip best from inventory
+                var best = available[bestIdx];
+                commands.Add(TransferCommand.Transfer(
+                    1,
+                    InventoryLogic.InventorySide.PlayerInventory,
+                    InventoryLogic.InventorySide.BattleEquipment,
+                    best.element,
+                    EquipmentIndex.None, slot, character));
+
+                // Mark as claimed
+                available[bestIdx] = (best.element, best.remaining - 1);
+            }
+        }
+
+        /// <summary>
+        /// Builds transfer commands to equip the best weapons across all four weapon slots.
+        /// Phase 1 upgrades occupied slots with the same weapon type, Phase 2 fills empty slots,
+        /// and Phase 3 guarantees at least one melee weapon is equipped.
+        /// </summary>
+        /// <param name="commands">The list to append generated transfer commands to.</param>
+        /// <param name="available">Snapshot of available inventory items with remaining counts.</param>
+        /// <param name="equipment">The character's current battle equipment.</param>
+        /// <param name="character">The character to generate transfer commands for.</param>
+        /// <param name="hero">The hero used for skill-based usability checks.</param>
+        private static void CollectWeaponCommands(
+            List<TransferCommand> commands,
+            List<(ItemRosterElement element, int remaining)> available,
+            Equipment equipment,
+            CharacterObject character,
+            Hero hero)
+        {
+            // Phase 1: For occupied slots, upgrade with same weapon type
+            for (var slot = EquipmentIndex.WeaponItemBeginSlot; slot <= EquipmentIndex.Weapon3; slot++)
+            {
+                var current = equipment[slot];
+                if (current.IsEmpty) continue;
+
+                int bestIdx = FindBestAvailableWeapon(
+                    available, hero, ScoreWeapon(current), current.Item.ItemType);
+                if (bestIdx >= 0)
+                    TransferSwapWeapon(commands, available, current, bestIdx, slot, character);
+            }
+
+            // Phase 2: Fill empty weapon slots with best available
+            for (var slot = EquipmentIndex.WeaponItemBeginSlot; slot <= EquipmentIndex.Weapon3; slot++)
+            {
+                if (!equipment[slot].IsEmpty) continue;
+
+                int bestIdx = FindBestAvailableWeapon(available, hero, -1f, null);
+                if (bestIdx >= 0)
+                    TransferEquipWeapon(commands, available, bestIdx, slot, character);
+            }
+
+            // Phase 3: Guarantee at least one melee weapon.
+            EnsureMeleeWeaponViaTransfer(commands, available, equipment, character, hero);
+        }
+
+        /// <summary>
+        /// Searches the available inventory snapshot for the highest-scoring weapon that exceeds
+        /// <paramref name="minScore"/>. Optionally filters by a specific weapon type.
+        /// </summary>
+        /// <param name="available">Snapshot of available inventory items with remaining counts.</param>
+        /// <param name="hero">The hero used for skill-based usability checks.</param>
+        /// <param name="minScore">The minimum score a candidate must exceed to be selected.</param>
+        /// <param name="requiredType">If set, only items of this type are considered; otherwise any weapon type is accepted.</param>
+        /// <returns>The index into <paramref name="available"/> of the best weapon, or -1 if none qualifies.</returns>
+        private static int FindBestAvailableWeapon(
+            List<(ItemRosterElement element, int remaining)> available,
+            Hero hero,
+            float minScore,
+            ItemTypeEnum? requiredType)
+        {
+            int bestIdx = -1;
+            float bestScore = minScore;
+
+            for (int i = 0; i < available.Count; i++)
+            {
+                var (el, remaining) = available[i];
+                if (remaining <= 0) continue;
+
+                ItemObject item = el.EquipmentElement.Item;
+                if (requiredType.HasValue ? item.ItemType != requiredType.Value
+                                         : !IsWeaponType(item.ItemType))
+                    continue;
+                if (!CanCharacterUseItem(item, hero)) continue;
+
+                float score = ScoreWeapon(el.EquipmentElement);
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    bestIdx = i;
+                }
+            }
+
+            return bestIdx;
+        }
+
+        /// <summary>
+        /// Generates transfer commands to unequip the current weapon from a slot and equip
+        /// a better weapon from the available pool in its place.
+        /// </summary>
+        /// <param name="commands">The list to append generated transfer commands to.</param>
+        /// <param name="available">Snapshot of available inventory items with remaining counts.</param>
+        /// <param name="current">The equipment element currently in the slot being replaced.</param>
+        /// <param name="bestIdx">Index into <paramref name="available"/> of the replacement weapon.</param>
+        /// <param name="slot">The equipment slot being swapped.</param>
+        /// <param name="character">The character to generate transfer commands for.</param>
+        private static void TransferSwapWeapon(
+            List<TransferCommand> commands,
+            List<(ItemRosterElement element, int remaining)> available,
+            EquipmentElement current,
+            int bestIdx,
+            EquipmentIndex slot,
+            CharacterObject character)
+        {
+            commands.Add(TransferCommand.Transfer(
+                1,
+                InventoryLogic.InventorySide.BattleEquipment,
+                InventoryLogic.InventorySide.PlayerInventory,
+                new ItemRosterElement(current, 1),
+                slot, EquipmentIndex.None, character));
+
+            TransferEquipWeapon(commands, available, bestIdx, slot, character);
+        }
+
+        /// <summary>
+        /// Generates a transfer command to equip a weapon from the available pool into a slot
+        /// and decrements the item's remaining count.
+        /// </summary>
+        /// <param name="commands">The list to append the transfer command to.</param>
+        /// <param name="available">Snapshot of available inventory items with remaining counts.</param>
+        /// <param name="bestIdx">Index into <paramref name="available"/> of the weapon to equip.</param>
+        /// <param name="slot">The target equipment slot.</param>
+        /// <param name="character">The character to generate the transfer command for.</param>
+        private static void TransferEquipWeapon(
+            List<TransferCommand> commands,
+            List<(ItemRosterElement element, int remaining)> available,
+            int bestIdx,
+            EquipmentIndex slot,
+            CharacterObject character)
+        {
+            var best = available[bestIdx];
+            commands.Add(TransferCommand.Transfer(
+                1,
+                InventoryLogic.InventorySide.PlayerInventory,
+                InventoryLogic.InventorySide.BattleEquipment,
+                best.element,
+                EquipmentIndex.None, slot, character));
+
+            available[bestIdx] = (best.element, best.remaining - 1);
+        }
+
+        /// <summary>
+        /// Guarantees that at least one melee weapon is equipped by generating transfer commands.
+        /// If no melee weapon is currently equipped, the best available melee weapon replaces the
+        /// lowest-scoring weapon slot (or fills an empty slot).
+        /// </summary>
+        /// <param name="commands">The list to append generated transfer commands to.</param>
+        /// <param name="available">Snapshot of available inventory items with remaining counts.</param>
+        /// <param name="equipment">The character's current battle equipment.</param>
+        /// <param name="character">The character to generate transfer commands for.</param>
+        /// <param name="hero">The hero used for skill-based usability checks.</param>
+        private static void EnsureMeleeWeaponViaTransfer(
+            List<TransferCommand> commands,
+            List<(ItemRosterElement element, int remaining)> available,
+            Equipment equipment,
+            CharacterObject character,
+            Hero hero)
+        {
+            if (HasEquippedMeleeWeapon(equipment))
+                return;
+
+            int bestIdx = FindBestMeleeInAvailable(available, hero);
+            if (bestIdx < 0)
+                return;
+
+            EquipmentIndex worstSlot = FindWorstWeaponSlot(equipment);
+            if (worstSlot == EquipmentIndex.None)
+                return;
+
+            if (!equipment[worstSlot].IsEmpty)
+            {
+                commands.Add(TransferCommand.Transfer(
+                    1,
+                    InventoryLogic.InventorySide.BattleEquipment,
+                    InventoryLogic.InventorySide.PlayerInventory,
+                    new ItemRosterElement(equipment[worstSlot], 1),
+                    worstSlot, EquipmentIndex.None, character));
+            }
+
+            TransferEquipWeapon(commands, available, bestIdx, worstSlot, character);
+        }
+
+        /// <summary>
+        /// Checks whether any of the four weapon slots contains a melee weapon.
+        /// </summary>
+        /// <param name="equipment">The equipment to inspect.</param>
+        /// <returns><c>true</c> if at least one weapon slot holds a melee weapon; otherwise <c>false</c>.</returns>
+        private static bool HasEquippedMeleeWeapon(Equipment equipment)
+        {
+            for (var slot = EquipmentIndex.WeaponItemBeginSlot; slot <= EquipmentIndex.Weapon3; slot++)
+            {
+                if (!equipment[slot].IsEmpty && IsMeleeWeaponType(equipment[slot].Item.ItemType))
+                    return true;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Searches the available inventory snapshot for the highest-scoring melee weapon.
+        /// </summary>
+        /// <param name="available">Snapshot of available inventory items with remaining counts.</param>
+        /// <param name="hero">The hero used for skill-based usability checks.</param>
+        /// <returns>The index into <paramref name="available"/> of the best melee weapon, or -1 if none found.</returns>
+        private static int FindBestMeleeInAvailable(
+            List<(ItemRosterElement element, int remaining)> available, Hero hero)
+        {
+            int bestIdx = -1;
+            float bestScore = -1f;
+            for (int i = 0; i < available.Count; i++)
+            {
+                var (el, remaining) = available[i];
+                if (remaining <= 0) continue;
+                var item = el.EquipmentElement.Item;
+                if (!IsMeleeWeaponType(item.ItemType)) continue;
+                if (!CanCharacterUseItem(item, hero)) continue;
+
+                float score = ScoreWeapon(el.EquipmentElement);
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    bestIdx = i;
+                }
+            }
+            return bestIdx;
+        }
+
+        /// <summary>
+        /// Finds the weapon slot with the lowest score, preferring empty slots.
+        /// Used to determine which slot to replace when forcing a melee weapon.
+        /// </summary>
+        /// <param name="equipment">The equipment to inspect.</param>
+        /// <returns>The index of the worst weapon slot, or <see cref="EquipmentIndex.None"/> if no weapon slots exist.</returns>
+        private static EquipmentIndex FindWorstWeaponSlot(Equipment equipment)
+        {
+            EquipmentIndex worstSlot = EquipmentIndex.None;
+            float worstScore = float.MaxValue;
+            for (var slot = EquipmentIndex.WeaponItemBeginSlot; slot <= EquipmentIndex.Weapon3; slot++)
+            {
+                if (equipment[slot].IsEmpty)
+                    return slot;
+
+                float score = ScoreWeapon(equipment[slot]);
+                if (score < worstScore)
+                {
+                    worstScore = score;
+                    worstSlot = slot;
+                }
+            }
+            return worstSlot;
+        }
+
+        /// <summary>
+        /// Directly equips the best item of a given type into a single equipment slot.
+        /// If a better item exists in the roster, the current item is returned to the roster and replaced.
+        /// </summary>
+        /// <param name="equipment">The character's battle equipment to modify.</param>
+        /// <param name="roster">The party item roster to search and update.</param>
+        /// <param name="slot">The equipment slot to evaluate.</param>
+        /// <param name="itemType">The item type expected in this slot.</param>
+        /// <param name="hero">Optional hero for skill-based usability checks.</param>
         internal static void EquipBestForSlot(
             Equipment equipment,
             ItemRoster roster,
             EquipmentIndex slot,
-            ItemTypeEnum itemType)
+            ItemTypeEnum itemType,
+            Hero hero = null)
         {
             EquipmentElement currentElement = equipment[slot];
             float currentScore = ScoreItem(currentElement, itemType);
@@ -72,7 +455,7 @@ namespace AutoEquipBest
                     continue;
 
                 // Check usability by the hero
-                if (!CanCharacterUseItem(item))
+                if (!CanCharacterUseItem(item, hero))
                     continue;
 
                 float score = ScoreItem(rosterElement.EquipmentElement, itemType);
@@ -98,114 +481,179 @@ namespace AutoEquipBest
             }
         }
 
-        internal static void EquipBestWeapons(Equipment equipment, ItemRoster roster)
+        /// <summary>
+        /// Directly equips the best weapons across all four weapon slots.
+        /// Phase 1 upgrades occupied slots with the same weapon type, Phase 2 fills empty slots,
+        /// and Phase 3 guarantees at least one melee weapon is equipped.
+        /// </summary>
+        /// <param name="equipment">The character's battle equipment to modify.</param>
+        /// <param name="roster">The party item roster to search and update.</param>
+        /// <param name="hero">Optional hero for skill-based usability checks.</param>
+        internal static void EquipBestWeapons(Equipment equipment, ItemRoster roster, Hero hero = null)
         {
-            // Gather all weapon candidates from inventory
-            var weaponCandidates = new List<(EquipmentElement element, int rosterIndex, float score)>();
+            // Phase 1: For occupied slots, upgrade only with the same ItemType.
+            for (var slot = EquipmentIndex.WeaponItemBeginSlot; slot <= EquipmentIndex.Weapon3; slot++)
+            {
+                var current = equipment[slot];
+                if (current.IsEmpty) continue;
+
+                int bestIndex = FindBestInRoster(
+                    roster, hero, ScoreWeapon(current), current.Item.ItemType);
+                if (bestIndex >= 0)
+                    DirectSwapWeapon(equipment, roster, current, bestIndex, slot);
+            }
+
+            // Phase 2: Fill empty slots with the best available weapons.
+            for (var slot = EquipmentIndex.WeaponItemBeginSlot; slot <= EquipmentIndex.Weapon3; slot++)
+            {
+                if (!equipment[slot].IsEmpty) continue;
+
+                int bestIndex = FindBestInRoster(roster, hero, -1f, null);
+                if (bestIndex >= 0)
+                    DirectEquipWeapon(equipment, roster, bestIndex, slot);
+            }
+
+            // Phase 3: Guarantee at least one melee weapon.
+            EnsureMeleeWeapon(equipment, roster, hero);
+        }
+
+        /// <summary>
+        /// Searches the item roster for the highest-scoring weapon that exceeds
+        /// <paramref name="minScore"/>. Optionally filters by a specific weapon type.
+        /// </summary>
+        /// <param name="roster">The party item roster to search.</param>
+        /// <param name="hero">The hero used for skill-based usability checks.</param>
+        /// <param name="minScore">The minimum score a candidate must exceed to be selected.</param>
+        /// <param name="requiredType">If set, only items of this type are considered; otherwise any weapon type is accepted.</param>
+        /// <returns>The index into <paramref name="roster"/> of the best weapon, or -1 if none qualifies.</returns>
+        private static int FindBestInRoster(
+            ItemRoster roster,
+            Hero hero,
+            float minScore,
+            ItemTypeEnum? requiredType)
+        {
+            int bestIndex = -1;
+            float bestScore = minScore;
 
             for (int i = 0; i < roster.Count; i++)
             {
-                ItemRosterElement rosterElement = roster[i];
-                if (rosterElement.Amount <= 0)
+                ItemRosterElement el = roster[i];
+                if (el.Amount <= 0) continue;
+
+                ItemObject item = el.EquipmentElement.Item;
+                if (item == null) continue;
+                if (requiredType.HasValue ? item.ItemType != requiredType.Value
+                                         : !IsWeaponType(item.ItemType))
                     continue;
+                if (!CanCharacterUseItem(item, hero)) continue;
 
-                ItemObject item = rosterElement.EquipmentElement.Item;
-                if (item == null)
-                    continue;
-
-                if (!IsWeaponType(item.ItemType))
-                    continue;
-
-                if (!CanCharacterUseItem(item))
-                    continue;
-
-                float score = ScoreWeapon(rosterElement.EquipmentElement);
-                weaponCandidates.Add((rosterElement.EquipmentElement, i, score));
-            }
-
-            // Also consider currently equipped weapons
-            var currentWeapons = new List<(EquipmentElement element, EquipmentIndex slot, float score)>();
-            for (var slot = EquipmentIndex.WeaponItemBeginSlot; slot < EquipmentIndex.NumAllWeaponSlots; slot++)
-            {
-                var el = equipment[slot];
-                if (!el.IsEmpty)
+                float score = ScoreWeapon(el.EquipmentElement);
+                if (score > bestScore)
                 {
-                    currentWeapons.Add((el, slot, ScoreWeapon(el)));
+                    bestScore = score;
+                    bestIndex = i;
                 }
             }
 
-            // Merge all candidates, picking top 4 diverse weapons
-            var allCandidates = new List<(EquipmentElement element, float score, int rosterIndex)>();
+            return bestIndex;
+        }
 
-            foreach (var c in weaponCandidates)
-                allCandidates.Add((c.element, c.score, c.rosterIndex));
-            foreach (var c in currentWeapons)
-                allCandidates.Add((c.element, c.score, -1)); // -1 = already equipped
+        /// <summary>
+        /// Returns the current weapon to the roster and equips a better weapon in its place.
+        /// </summary>
+        /// <param name="equipment">The character's battle equipment to modify.</param>
+        /// <param name="roster">The party item roster to update.</param>
+        /// <param name="current">The equipment element currently in the slot being replaced.</param>
+        /// <param name="bestIndex">Index into <paramref name="roster"/> of the replacement weapon.</param>
+        /// <param name="slot">The equipment slot being swapped.</param>
+        private static void DirectSwapWeapon(
+            Equipment equipment, ItemRoster roster,
+            EquipmentElement current, int bestIndex, EquipmentIndex slot)
+        {
+            roster.AddToCounts(current, 1);
+            DirectEquipWeapon(equipment, roster, bestIndex, slot);
+        }
 
-            // Sort by score descending
-            allCandidates.Sort((a, b) => b.score.CompareTo(a.score));
+        /// <summary>
+        /// Equips a weapon from the roster into the specified slot, removing it from the roster.
+        /// </summary>
+        /// <param name="equipment">The character's battle equipment to modify.</param>
+        /// <param name="roster">The party item roster to update.</param>
+        /// <param name="bestIndex">Index into <paramref name="roster"/> of the weapon to equip.</param>
+        /// <param name="slot">The target equipment slot.</param>
+        private static void DirectEquipWeapon(
+            Equipment equipment, ItemRoster roster,
+            int bestIndex, EquipmentIndex slot)
+        {
+            var bestElement = roster[bestIndex].EquipmentElement;
+            equipment[slot] = bestElement;
+            roster.AddToCounts(bestElement, -1);
+        }
 
-            // Pick up to 4 weapons, preferring diversity of weapon class
-            var selectedWeapons = new List<EquipmentElement>();
-            var usedClasses = new HashSet<WeaponClass>();
-            var usedRosterIndices = new HashSet<int>();
+        /// <summary>
+        /// Guarantees that at least one melee weapon is equipped via direct equipment modification.
+        /// If no melee weapon is currently equipped, the best available melee weapon replaces the
+        /// lowest-scoring weapon slot (or fills an empty slot).
+        /// </summary>
+        /// <param name="equipment">The character's battle equipment to modify.</param>
+        /// <param name="roster">The party item roster to search and update.</param>
+        /// <param name="hero">The hero used for skill-based usability checks.</param>
+        private static void EnsureMeleeWeapon(Equipment equipment, ItemRoster roster, Hero hero)
+        {
+            if (HasEquippedMeleeWeapon(equipment))
+                return;
 
-            foreach (var candidate in allCandidates)
+            int bestIdx = FindBestMeleeInRoster(roster, hero);
+            if (bestIdx < 0)
+                return;
+
+            EquipmentIndex worstSlot = FindWorstWeaponSlot(equipment);
+            if (worstSlot == EquipmentIndex.None)
+                return;
+
+            if (!equipment[worstSlot].IsEmpty)
+                roster.AddToCounts(equipment[worstSlot], 1);
+
+            DirectEquipWeapon(equipment, roster, bestIdx, worstSlot);
+        }
+
+        /// <summary>
+        /// Searches the item roster for the highest-scoring melee weapon the hero can use.
+        /// </summary>
+        /// <param name="roster">The party item roster to search.</param>
+        /// <param name="hero">The hero used for skill-based usability checks.</param>
+        /// <returns>The index into <paramref name="roster"/> of the best melee weapon, or -1 if none found.</returns>
+        private static int FindBestMeleeInRoster(ItemRoster roster, Hero hero)
+        {
+            int bestIdx = -1;
+            float bestScore = -1f;
+            for (int i = 0; i < roster.Count; i++)
             {
-                if (selectedWeapons.Count >= 4)
-                    break;
+                var el = roster[i];
+                if (el.Amount <= 0) continue;
+                var item = el.EquipmentElement.Item;
+                if (item == null || !IsMeleeWeaponType(item.ItemType)) continue;
+                if (!CanCharacterUseItem(item, hero)) continue;
 
-                var weaponClass = GetPrimaryWeaponClass(candidate.element.Item);
-                // Allow one of each class, but fill remaining slots with any best
-                if (usedClasses.Contains(weaponClass) && selectedWeapons.Count < 3)
-                    continue;
-
-                selectedWeapons.Add(candidate.element);
-                usedClasses.Add(weaponClass);
-                if (candidate.rosterIndex >= 0)
-                    usedRosterIndices.Add(candidate.rosterIndex);
-            }
-
-            // If we didn't fill 4 slots with diverse weapons, fill the rest with best remaining
-            if (selectedWeapons.Count < 4)
-            {
-                foreach (var candidate in allCandidates)
+                float score = ScoreWeapon(el.EquipmentElement);
+                if (score > bestScore)
                 {
-                    if (selectedWeapons.Count >= 4)
-                        break;
-                    if (selectedWeapons.Contains(candidate.element))
-                        continue;
-
-                    selectedWeapons.Add(candidate.element);
-                    if (candidate.rosterIndex >= 0)
-                        usedRosterIndices.Add(candidate.rosterIndex);
+                    bestScore = score;
+                    bestIdx = i;
                 }
             }
-
-            // Return currently equipped weapons to inventory
-            for (var slot = EquipmentIndex.WeaponItemBeginSlot; slot < EquipmentIndex.NumAllWeaponSlots; slot++)
-            {
-                var el = equipment[slot];
-                if (!el.IsEmpty)
-                {
-                    roster.AddToCounts(el, 1);
-                    equipment[slot] = EquipmentElement.Invalid;
-                }
-            }
-
-            // Equip selected weapons
-            int slotIdx = 0;
-            for (var slot = EquipmentIndex.WeaponItemBeginSlot;
-                 slot < EquipmentIndex.NumAllWeaponSlots && slotIdx < selectedWeapons.Count;
-                 slot++, slotIdx++)
-            {
-                equipment[slot] = selectedWeapons[slotIdx];
-                roster.AddToCounts(selectedWeapons[slotIdx], -1);
-            }
+            return bestIdx;
         }
 
         // --- Scoring ---
 
+        /// <summary>
+        /// Scores a non-weapon equipment element based on its armor or horse stats.
+        /// Higher scores indicate better items for the given slot type.
+        /// </summary>
+        /// <param name="element">The equipment element to score.</param>
+        /// <param name="itemType">The item type determining which stats are evaluated.</param>
+        /// <returns>A numeric score, or -1 if the element is empty.</returns>
         internal static float ScoreItem(EquipmentElement element, ItemTypeEnum itemType)
         {
             if (element.IsEmpty || element.Item == null)
@@ -239,6 +687,12 @@ namespace AutoEquipBest
             }
         }
 
+        /// <summary>
+        /// Scores a weapon element based on damage, speed, range, and tier.
+        /// Shields use a separate formula based on hit points and armor.
+        /// </summary>
+        /// <param name="element">The weapon equipment element to score.</param>
+        /// <returns>A numeric score, or -1 if the element is empty.</returns>
         internal static float ScoreWeapon(EquipmentElement element)
         {
             if (element.IsEmpty || element.Item == null)
@@ -279,6 +733,11 @@ namespace AutoEquipBest
             return score;
         }
 
+        /// <summary>
+        /// Gets the primary weapon class of an item.
+        /// </summary>
+        /// <param name="item">The item to inspect.</param>
+        /// <returns>The <see cref="WeaponClass"/> of the item's primary weapon, or <see cref="WeaponClass.Undefined"/> if unavailable.</returns>
         internal static WeaponClass GetPrimaryWeaponClass(ItemObject item)
         {
             if (item?.WeaponComponent?.PrimaryWeapon == null)
@@ -286,6 +745,11 @@ namespace AutoEquipBest
             return item.WeaponComponent.PrimaryWeapon.WeaponClass;
         }
 
+        /// <summary>
+        /// Determines whether the given item type is any kind of weapon (melee, ranged, ammo, or shield).
+        /// </summary>
+        /// <param name="type">The item type to check.</param>
+        /// <returns><c>true</c> if the type is a weapon category; otherwise <c>false</c>.</returns>
         internal static bool IsWeaponType(ItemTypeEnum type)
         {
             switch (type)
@@ -305,31 +769,54 @@ namespace AutoEquipBest
             }
         }
 
-        internal static bool CanCharacterUseItem(ItemObject item)
+        /// <summary>
+        /// Determines whether the given item type is a melee weapon (one-handed, two-handed, or polearm).
+        /// </summary>
+        /// <param name="type">The item type to check.</param>
+        /// <returns><c>true</c> if the type is a melee weapon; otherwise <c>false</c>.</returns>
+        internal static bool IsMeleeWeaponType(ItemTypeEnum type)
         {
-            Hero hero;
-            try
+            switch (type)
             {
-                hero = Hero.MainHero;
+                case ItemTypeEnum.OneHandedWeapon:
+                case ItemTypeEnum.TwoHandedWeapon:
+                case ItemTypeEnum.Polearm:
+                    return true;
+                default:
+                    return false;
             }
-            catch
+        }
+
+        /// <summary>
+        /// Checks whether a hero meets the skill requirements to use an item.
+        /// Returns <c>true</c> if the hero is null, has no character object, or the item has no difficulty requirement.
+        /// </summary>
+        /// <param name="item">The item to check usability for.</param>
+        /// <param name="hero">The hero to check against. Falls back to <see cref="Hero.MainHero"/> if null.</param>
+        /// <returns><c>true</c> if the hero can use the item; otherwise <c>false</c>.</returns>
+        internal static bool CanCharacterUseItem(ItemObject item, Hero hero = null)
+        {
+            if (hero == null)
             {
-                return true;
+                try
+                {
+                    hero = Hero.MainHero;
+                }
+                catch
+                {
+                    return true;
+                }
             }
 
             if (hero?.CharacterObject == null)
                 return true;
 
             // Check if item has usage restrictions based on character
-            if (item.Difficulty > 0)
+            if (item.Difficulty > 0 && item.RelevantSkill != null)
             {
-                // Compare against relevant skill
-                if (item.RelevantSkill != null)
-                {
-                    int skillValue = hero.CharacterObject.GetSkillValue(item.RelevantSkill);
-                    if (skillValue < item.Difficulty)
-                        return false;
-                }
+                int skillValue = hero.CharacterObject.GetSkillValue(item.RelevantSkill);
+                if (skillValue < item.Difficulty)
+                    return false;
             }
 
             return true;

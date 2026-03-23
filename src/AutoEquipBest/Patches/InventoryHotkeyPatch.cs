@@ -32,17 +32,18 @@ namespace AutoEquipBest.Patches
             if (!IsInventoryOpen)
                 return;
 
-            if (Input.IsKeyDown(InputKey.LeftControl) && Input.IsKeyPressed(InputKey.E))
+            if (Input.IsKeyDown(InputKey.LeftControl) && Input.IsKeyPressed(InputKey.A))
             {
                 try
                 {
-                    AutoEquipLogic.EquipBestItems();
-
                     var mixin = SPInventoryVMPatch.CurrentMixin;
-                    if (mixin?.InventoryVM != null)
+                    if (mixin != null)
                     {
-                        mixin.InventoryVM.ExecuteRemoveZeroCounts();
-                        mixin.InventoryVM.RefreshValues();
+                        mixin.ExecuteAutoEquipBest();
+                    }
+                    else
+                    {
+                        AutoEquipLogic.EquipBestItems(TaleWorlds.CampaignSystem.Hero.MainHero);
                     }
                 }
                 catch (System.Exception ex)

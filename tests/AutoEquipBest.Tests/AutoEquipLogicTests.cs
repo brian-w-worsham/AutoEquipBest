@@ -384,7 +384,6 @@ namespace AutoEquipBest.Tests
 
             AutoEquipLogic.EquipBestWeapons(equipment, roster);
 
-            // Count equipped weapons
             int equippedCount = 0;
             for (var slot = EquipmentIndex.WeaponItemBeginSlot; slot < EquipmentIndex.NumAllWeaponSlots; slot++)
             {
@@ -396,29 +395,24 @@ namespace AutoEquipBest.Tests
         }
 
         [Fact]
-        public void EquipBestWeapons_PrefersWeaponClassDiversity()
+        public void EquipBestWeapons_FillsEmptySlotsWithBestAvailable()
         {
             var equipment = new Equipment();
             var roster = new ItemRoster();
 
-            // Two swords with high damage, a polearm and bow with lower damage
-            var sword1 = TestItemFactory.CreateWeaponItem(
+            var sword = TestItemFactory.CreateWeaponItem(
                 ItemTypeEnum.OneHandedWeapon, WeaponClass.OneHandedSword, swingDamage: 100);
-            var sword2 = TestItemFactory.CreateWeaponItem(
-                ItemTypeEnum.OneHandedWeapon, WeaponClass.OneHandedSword, swingDamage: 95);
             var polearm = TestItemFactory.CreateWeaponItem(
                 ItemTypeEnum.Polearm, WeaponClass.OneHandedPolearm, thrustDamage: 70);
             var bow = TestItemFactory.CreateWeaponItem(
                 ItemTypeEnum.Bow, WeaponClass.Bow, missileSpeed: 60);
 
-            roster.AddToCounts(sword1, 1);
-            roster.AddToCounts(sword2, 1);
+            roster.AddToCounts(sword, 1);
             roster.AddToCounts(polearm, 1);
             roster.AddToCounts(bow, 1);
 
             AutoEquipLogic.EquipBestWeapons(equipment, roster);
 
-            // Gather equipped items
             var equipped = new System.Collections.Generic.List<ItemObject>();
             for (var slot = EquipmentIndex.WeaponItemBeginSlot; slot < EquipmentIndex.NumAllWeaponSlots; slot++)
             {
@@ -426,8 +420,7 @@ namespace AutoEquipBest.Tests
                     equipped.Add(equipment[slot].Item);
             }
 
-            // Should include sword1 (best), polearm, and bow for diversity
-            Assert.Contains(sword1, equipped);
+            Assert.Contains(sword, equipped);
             Assert.Contains(polearm, equipped);
             Assert.Contains(bow, equipped);
         }
@@ -438,23 +431,31 @@ namespace AutoEquipBest.Tests
             var equipment = new Equipment();
             var roster = new ItemRoster();
 
-            // Pre-equip a weak weapon
+            // Fill all 4 weapon slots so Phase 2 has nothing to fill
             var oldSword = TestItemFactory.CreateWeaponItem(
                 ItemTypeEnum.OneHandedWeapon, WeaponClass.OneHandedSword, swingDamage: 10);
-            equipment[EquipmentIndex.WeaponItemBeginSlot] = TestItemFactory.ToElement(oldSword);
+            var shield = TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.Shield, WeaponClass.SmallShield, maxDataValue: 80, bodyArmor: 5);
+            var bow = TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.Bow, WeaponClass.Bow, missileSpeed: 50);
+            var arrows = TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.Arrows, WeaponClass.Arrow, maxDataValue: 20);
 
-            // Inventory has 4 better weapons to fill all slots and displace the old one
-            for (int i = 0; i < 4; i++)
-            {
-                var w = TestItemFactory.CreateWeaponItem(
-                    ItemTypeEnum.OneHandedWeapon, WeaponClass.OneHandedSword, swingDamage: 80 + i * 5);
-                roster.AddToCounts(w, 1);
-            }
+            equipment[EquipmentIndex.WeaponItemBeginSlot] = TestItemFactory.ToElement(oldSword);
+            equipment[EquipmentIndex.Weapon1] = TestItemFactory.ToElement(shield);
+            equipment[EquipmentIndex.Weapon2] = TestItemFactory.ToElement(bow);
+            equipment[EquipmentIndex.Weapon3] = TestItemFactory.ToElement(arrows);
+
+            // Inventory has a better one-handed weapon
+            var betterSword = TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.OneHandedWeapon, WeaponClass.OneHandedSword, swingDamage: 95);
+            roster.AddToCounts(betterSword, 1);
 
             AutoEquipLogic.EquipBestWeapons(equipment, roster);
 
-            // Old sword should be in roster since 4 better weapons displaced it
+            // Old sword should be returned to roster after upgrade
             Assert.True(roster.GetItemNumber(oldSword) >= 1, "Old weapon should be returned to roster");
+            Assert.Equal(betterSword, equipment[EquipmentIndex.WeaponItemBeginSlot].Item);
         }
 
         [Fact]
@@ -469,6 +470,272 @@ namespace AutoEquipBest.Tests
             {
                 Assert.True(equipment[slot].IsEmpty, $"Slot {slot} should be empty with no weapons available");
             }
+        }
+
+        [Fact]
+        public void EquipBestWeapons_DoesNotReplaceTwoHandedWithOneHanded()
+        {
+            var equipment = new Equipment();
+            var roster = new ItemRoster();
+
+            // Character has a two-handed weapon equipped
+            var twoHander = TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.TwoHandedWeapon, WeaponClass.TwoHandedSword, swingDamage: 50);
+            equipment[EquipmentIndex.WeaponItemBeginSlot] = TestItemFactory.ToElement(twoHander);
+
+            // Roster has a much better one-handed weapon
+            var betterOneHander = TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.OneHandedWeapon, WeaponClass.OneHandedSword, swingDamage: 200);
+            roster.AddToCounts(betterOneHander, 1);
+
+            AutoEquipLogic.EquipBestWeapons(equipment, roster);
+
+            // Two-handed weapon should NOT be replaced by the one-handed weapon
+            Assert.Equal(twoHander, equipment[EquipmentIndex.WeaponItemBeginSlot].Item);
+        }
+
+        [Fact]
+        public void EquipBestWeapons_DoesNotReplaceShieldWithWeapon()
+        {
+            var equipment = new Equipment();
+            var roster = new ItemRoster();
+
+            // Character has a shield equipped
+            var shield = TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.Shield, WeaponClass.SmallShield, maxDataValue: 100, bodyArmor: 10);
+            equipment[EquipmentIndex.WeaponItemBeginSlot] = TestItemFactory.ToElement(shield);
+
+            // Roster has a much better sword
+            var sword = TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.OneHandedWeapon, WeaponClass.OneHandedSword, swingDamage: 200);
+            roster.AddToCounts(sword, 1);
+
+            AutoEquipLogic.EquipBestWeapons(equipment, roster);
+
+            // Shield should NOT be replaced by the sword
+            Assert.Equal(shield, equipment[EquipmentIndex.WeaponItemBeginSlot].Item);
+        }
+
+        [Fact]
+        public void EquipBestWeapons_UpgradesWithSameItemType()
+        {
+            var equipment = new Equipment();
+            var roster = new ItemRoster();
+
+            // Character has a weak one-handed weapon
+            var weakSword = TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.OneHandedWeapon, WeaponClass.OneHandedSword, swingDamage: 30);
+            equipment[EquipmentIndex.WeaponItemBeginSlot] = TestItemFactory.ToElement(weakSword);
+
+            // Roster has a better one-handed weapon
+            var betterSword = TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.OneHandedWeapon, WeaponClass.OneHandedSword, swingDamage: 100);
+            roster.AddToCounts(betterSword, 1);
+
+            AutoEquipLogic.EquipBestWeapons(equipment, roster);
+
+            // Should upgrade to the better one-handed weapon
+            Assert.Equal(betterSword, equipment[EquipmentIndex.WeaponItemBeginSlot].Item);
+        }
+
+        [Fact]
+        public void EquipBestWeapons_PreservesWeaponTypesAcrossSlots()
+        {
+            var equipment = new Equipment();
+            var roster = new ItemRoster();
+
+            // Character's loadout: 1h sword, shield, bow, arrows
+            var sword = TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.OneHandedWeapon, WeaponClass.OneHandedSword, swingDamage: 40);
+            var shield = TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.Shield, WeaponClass.SmallShield, maxDataValue: 80, bodyArmor: 5);
+            var bow = TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.Bow, WeaponClass.Bow, missileSpeed: 50);
+            var arrows = TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.Arrows, WeaponClass.Arrow, maxDataValue: 20);
+
+            equipment[EquipmentIndex.WeaponItemBeginSlot] = TestItemFactory.ToElement(sword);
+            equipment[EquipmentIndex.Weapon1] = TestItemFactory.ToElement(shield);
+            equipment[EquipmentIndex.Weapon2] = TestItemFactory.ToElement(bow);
+            equipment[EquipmentIndex.Weapon3] = TestItemFactory.ToElement(arrows);
+
+            // Roster has a better 2h weapon and a better polearm — should NOT displace anything
+            var twoHander = TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.TwoHandedWeapon, WeaponClass.TwoHandedSword, swingDamage: 200);
+            var polearm = TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.Polearm, WeaponClass.OneHandedPolearm, thrustDamage: 150);
+            roster.AddToCounts(twoHander, 1);
+            roster.AddToCounts(polearm, 1);
+
+            AutoEquipLogic.EquipBestWeapons(equipment, roster);
+
+            // All original weapon types should be preserved
+            Assert.Equal(ItemTypeEnum.OneHandedWeapon, equipment[EquipmentIndex.WeaponItemBeginSlot].Item.ItemType);
+            Assert.Equal(ItemTypeEnum.Shield, equipment[EquipmentIndex.Weapon1].Item.ItemType);
+            Assert.Equal(ItemTypeEnum.Bow, equipment[EquipmentIndex.Weapon2].Item.ItemType);
+            Assert.Equal(ItemTypeEnum.Arrows, equipment[EquipmentIndex.Weapon3].Item.ItemType);
+
+            // And the mismatched items should remain in roster
+            Assert.True(roster.GetItemNumber(twoHander) >= 1);
+            Assert.True(roster.GetItemNumber(polearm) >= 1);
+        }
+
+        [Fact]
+        public void EquipBestWeapons_UpgradesBetterShield()
+        {
+            var equipment = new Equipment();
+            var roster = new ItemRoster();
+
+            // Character has a weak shield
+            var weakShield = TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.Shield, WeaponClass.SmallShield, maxDataValue: 50, bodyArmor: 5);
+            equipment[EquipmentIndex.WeaponItemBeginSlot] = TestItemFactory.ToElement(weakShield);
+
+            // Roster has a better shield
+            var betterShield = TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.Shield, WeaponClass.SmallShield, maxDataValue: 200, bodyArmor: 15);
+            roster.AddToCounts(betterShield, 1);
+
+            AutoEquipLogic.EquipBestWeapons(equipment, roster);
+
+            Assert.Equal(betterShield, equipment[EquipmentIndex.WeaponItemBeginSlot].Item);
+        }
+
+        [Fact]
+        public void EquipBestWeapons_OnlyThrown_ReplaceOneWithMelee()
+        {
+            var equipment = new Equipment();
+            var roster = new ItemRoster();
+
+            // Roster only has thrown weapons and one sword
+            var thrown1 = TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.Thrown, WeaponClass.Javelin, thrustDamage: 80, missileSpeed: 40);
+            var thrown2 = TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.Thrown, WeaponClass.Javelin, thrustDamage: 70, missileSpeed: 35);
+            var thrown3 = TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.Thrown, WeaponClass.Javelin, thrustDamage: 60, missileSpeed: 30);
+            var thrown4 = TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.Thrown, WeaponClass.Javelin, thrustDamage: 50, missileSpeed: 25);
+            var sword = TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.OneHandedWeapon, WeaponClass.OneHandedSword, swingDamage: 40);
+
+            roster.AddToCounts(thrown1, 1);
+            roster.AddToCounts(thrown2, 1);
+            roster.AddToCounts(thrown3, 1);
+            roster.AddToCounts(thrown4, 1);
+            roster.AddToCounts(sword, 1);
+
+            AutoEquipLogic.EquipBestWeapons(equipment, roster);
+
+            // Should have at least one melee weapon equipped
+            bool hasMelee = false;
+            for (var slot = EquipmentIndex.WeaponItemBeginSlot; slot <= EquipmentIndex.Weapon3; slot++)
+            {
+                if (!equipment[slot].IsEmpty && AutoEquipLogic.IsMeleeWeaponType(equipment[slot].Item.ItemType))
+                {
+                    hasMelee = true;
+                    break;
+                }
+            }
+            Assert.True(hasMelee, "Character should always have at least one melee weapon");
+        }
+
+        [Fact]
+        public void EquipBestWeapons_OnlyRanged_ReplaceOneWithMelee()
+        {
+            var equipment = new Equipment();
+            var roster = new ItemRoster();
+
+            // Only ranged weapons and one melee available
+            var bow = TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.Bow, WeaponClass.Bow, missileSpeed: 80);
+            var arrows = TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.Arrows, WeaponClass.Arrow, maxDataValue: 30);
+            var crossbow = TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.Crossbow, WeaponClass.Crossbow, missileSpeed: 70);
+            var bolts = TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.Bolts, WeaponClass.Bolt, maxDataValue: 25);
+            var polearm = TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.Polearm, WeaponClass.OneHandedPolearm, thrustDamage: 60);
+
+            roster.AddToCounts(bow, 1);
+            roster.AddToCounts(arrows, 1);
+            roster.AddToCounts(crossbow, 1);
+            roster.AddToCounts(bolts, 1);
+            roster.AddToCounts(polearm, 1);
+
+            AutoEquipLogic.EquipBestWeapons(equipment, roster);
+
+            bool hasMelee = false;
+            for (var slot = EquipmentIndex.WeaponItemBeginSlot; slot <= EquipmentIndex.Weapon3; slot++)
+            {
+                if (!equipment[slot].IsEmpty && AutoEquipLogic.IsMeleeWeaponType(equipment[slot].Item.ItemType))
+                {
+                    hasMelee = true;
+                    break;
+                }
+            }
+            Assert.True(hasMelee, "Character should always have at least one melee weapon");
+        }
+
+        [Fact]
+        public void EquipBestWeapons_NoMeleeAvailable_DoesNotCrash()
+        {
+            var equipment = new Equipment();
+            var roster = new ItemRoster();
+
+            // Only thrown weapons, no melee available at all
+            var thrown = TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.Thrown, WeaponClass.Javelin, thrustDamage: 60, missileSpeed: 30);
+            roster.AddToCounts(thrown, 1);
+
+            AutoEquipLogic.EquipBestWeapons(equipment, roster);
+
+            // Should still equip what's available, no crash
+            Assert.False(equipment[EquipmentIndex.WeaponItemBeginSlot].IsEmpty);
+        }
+
+        [Fact]
+        public void EquipBestWeapons_AlreadyHasMelee_NoChange()
+        {
+            var equipment = new Equipment();
+            var roster = new ItemRoster();
+
+            // Character already has a melee weapon and ranged weapons
+            var sword = TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.OneHandedWeapon, WeaponClass.OneHandedSword, swingDamage: 60);
+            var bow = TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.Bow, WeaponClass.Bow, missileSpeed: 70);
+            var arrows = TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.Arrows, WeaponClass.Arrow, maxDataValue: 25);
+
+            equipment[EquipmentIndex.WeaponItemBeginSlot] = TestItemFactory.ToElement(sword);
+            equipment[EquipmentIndex.Weapon1] = TestItemFactory.ToElement(bow);
+            equipment[EquipmentIndex.Weapon2] = TestItemFactory.ToElement(arrows);
+
+            AutoEquipLogic.EquipBestWeapons(equipment, roster);
+
+            // Melee weapon should still be there - no replacement
+            Assert.Equal(sword, equipment[EquipmentIndex.WeaponItemBeginSlot].Item);
+        }
+    }
+
+    public class AutoEquipLogicIsMeleeWeaponTypeTests
+    {
+        [Theory]
+        [InlineData(ItemTypeEnum.OneHandedWeapon, true)]
+        [InlineData(ItemTypeEnum.TwoHandedWeapon, true)]
+        [InlineData(ItemTypeEnum.Polearm, true)]
+        [InlineData(ItemTypeEnum.Bow, false)]
+        [InlineData(ItemTypeEnum.Crossbow, false)]
+        [InlineData(ItemTypeEnum.Arrows, false)]
+        [InlineData(ItemTypeEnum.Bolts, false)]
+        [InlineData(ItemTypeEnum.Shield, false)]
+        [InlineData(ItemTypeEnum.Thrown, false)]
+        [InlineData(ItemTypeEnum.HeadArmor, false)]
+        public void IsMeleeWeaponType_ReturnsExpected(ItemTypeEnum type, bool expected)
+        {
+            Assert.Equal(expected, AutoEquipLogic.IsMeleeWeaponType(type));
         }
     }
 }
