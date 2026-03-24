@@ -125,10 +125,8 @@ namespace AutoEquipBest
             Hero hero)
         {
             EquipmentElement current = equipment[slot];
-            float currentScore = ScoreItem(current, itemType);
-
             int bestIdx = -1;
-            float bestScore = currentScore;
+            float bestScore = ScoreItem(current, itemType);
 
             for (int i = 0; i < available.Count; i++)
             {
@@ -139,12 +137,15 @@ namespace AutoEquipBest
                 if (item.ItemType != itemType) continue;
                 if (!CanCharacterUseItem(item, hero)) continue;
 
-                float score = ScoreItem(el.EquipmentElement, itemType);
-                if (score > bestScore)
-                {
-                    bestScore = score;
-                    bestIdx = i;
-                }
+                var baseline = bestIdx >= 0
+                    ? available[bestIdx].element.EquipmentElement
+                    : current;
+
+                if (!IsBetterSlotCandidate(itemType, el.EquipmentElement, baseline, bestScore, out var candidateScore))
+                    continue;
+
+                bestScore = candidateScore;
+                bestIdx = i;
             }
 
             if (bestIdx >= 0)
@@ -439,10 +440,8 @@ namespace AutoEquipBest
             Hero hero = null)
         {
             EquipmentElement currentElement = equipment[slot];
-            float currentScore = ScoreItem(currentElement, itemType);
-
             int bestIndex = -1;
-            float bestScore = currentScore;
+            float bestScore = ScoreItem(currentElement, itemType);
 
             for (int i = 0; i < roster.Count; i++)
             {
@@ -458,12 +457,15 @@ namespace AutoEquipBest
                 if (!CanCharacterUseItem(item, hero))
                     continue;
 
-                float score = ScoreItem(rosterElement.EquipmentElement, itemType);
-                if (score > bestScore)
-                {
-                    bestScore = score;
-                    bestIndex = i;
-                }
+                var baseline = bestIndex >= 0
+                    ? roster[bestIndex].EquipmentElement
+                    : currentElement;
+
+                if (!IsBetterSlotCandidate(itemType, rosterElement.EquipmentElement, baseline, bestScore, out var candidateScore))
+                    continue;
+
+                bestScore = candidateScore;
+                bestIndex = i;
             }
 
             if (bestIndex >= 0)
@@ -643,6 +645,107 @@ namespace AutoEquipBest
                 }
             }
             return bestIdx;
+        }
+
+        /// <summary>
+        /// Compares two body armor items using deterministic tie-break rules.
+        /// Priority order is: higher total armor (body + leg + arm), lower weight,
+        /// higher armor tier, then higher item value.
+        /// </summary>
+        /// <param name="candidate">The candidate body armor item being evaluated.</param>
+        /// <param name="baseline">The current best body armor item to compare against.</param>
+        /// <returns>
+        /// <c>true</c> if <paramref name="candidate"/> is better than <paramref name="baseline"/>;
+        /// otherwise, <c>false</c>.
+        /// </returns>
+        private static bool IsBodyArmorBetter(EquipmentElement candidate, EquipmentElement baseline)
+        {
+            if (candidate.IsEmpty || candidate.Item == null)
+                return false;
+            if (baseline.IsEmpty || baseline.Item == null)
+                return true;
+
+            int candidateTotal = GetBodyArmorTotal(candidate);
+            int baselineTotal = GetBodyArmorTotal(baseline);
+            if (candidateTotal != baselineTotal)
+                return candidateTotal > baselineTotal;
+
+            float candidateWeight = GetItemWeightSafe(candidate);
+            float baselineWeight = GetItemWeightSafe(baseline);
+            if (System.Math.Abs(candidateWeight - baselineWeight) > 0.0001f)
+                return candidateWeight < baselineWeight;
+
+            int candidateTier = GetItemTierSafe(candidate);
+            int baselineTier = GetItemTierSafe(baseline);
+            if (candidateTier != baselineTier)
+                return candidateTier > baselineTier;
+
+            return candidate.ItemValue > baseline.ItemValue;
+        }
+
+        /// <summary>
+        /// Determines whether a candidate equipment element is better than the current baseline
+        /// for the specified slot type.
+        /// For body armor, delegates to body-armor tie-break rules; otherwise compares score values.
+        /// </summary>
+        /// <param name="itemType">The slot item type being evaluated.</param>
+        /// <param name="candidate">The candidate equipment element.</param>
+        /// <param name="baseline">The current best equipment element for comparison.</param>
+        /// <param name="bestScore">The current best score for non-body-armor comparisons.</param>
+        /// <param name="candidateScore">
+        /// Output score of <paramref name="candidate"/> for non-body-armor comparisons.
+        /// For body armor, this remains equal to <paramref name="bestScore"/>.
+        /// </param>
+        /// <returns><c>true</c> if the candidate should replace the baseline; otherwise <c>false</c>.</returns>
+        private static bool IsBetterSlotCandidate(
+            ItemTypeEnum itemType,
+            EquipmentElement candidate,
+            EquipmentElement baseline,
+            float bestScore,
+            out float candidateScore)
+        {
+            if (itemType == ItemTypeEnum.BodyArmor)
+            {
+                candidateScore = bestScore;
+                return IsBodyArmorBetter(candidate, baseline);
+            }
+
+            candidateScore = ScoreItem(candidate, itemType);
+            return candidateScore > bestScore;
+        }
+
+        /// <summary>
+        /// Calculates total body-armor protection from modified armor values
+        /// as body + leg + arm armor.
+        /// </summary>
+        /// <param name="element">The equipment element to evaluate.</param>
+        /// <returns>The summed armor value used as the primary comparison factor.</returns>
+        private static int GetBodyArmorTotal(EquipmentElement element)
+        {
+            return element.GetModifiedBodyArmor() +
+                   element.GetModifiedLegArmor() +
+                   element.GetModifiedArmArmor();
+        }
+
+        /// <summary>
+        /// Gets item weight with a safe fallback for null values.
+        /// </summary>
+        /// <param name="element">The equipment element to read weight from.</param>
+        /// <returns>The element weight, or <see cref="float.MaxValue"/> when the item is null.</returns>
+        private static float GetItemWeightSafe(EquipmentElement element)
+        {
+            return element.Item == null ? float.MaxValue : element.Weight;
+        }
+
+        /// <summary>
+        /// Gets item tier with a safe fallback if tier access is unavailable.
+        /// </summary>
+        /// <param name="element">The equipment element to read tier from.</param>
+        /// <returns>The numeric item tier, or 0 when tier cannot be resolved.</returns>
+        private static int GetItemTierSafe(EquipmentElement element)
+        {
+            try { return (int)element.Item.Tier; }
+            catch { return 0; }
         }
 
         // --- Scoring ---
