@@ -763,36 +763,50 @@ namespace AutoEquipBest
                 return -1f;
 
             var item = element.Item;
+            float score;
 
             switch (itemType)
             {
                 case ItemTypeEnum.HeadArmor:
-                    return item.ArmorComponent?.HeadArmor ?? 0;
+                    score = element.GetModifiedHeadArmor();
+                    break;
                 case ItemTypeEnum.BodyArmor:
-                    return (item.ArmorComponent?.BodyArmor ?? 0) +
-                           (item.ArmorComponent?.ArmArmor ?? 0) * 0.5f +
-                           (item.ArmorComponent?.LegArmor ?? 0) * 0.3f;
+                    score = element.GetModifiedBodyArmor() +
+                            element.GetModifiedArmArmor() * 0.5f +
+                            element.GetModifiedLegArmor() * 0.3f;
+                    break;
                 case ItemTypeEnum.LegArmor:
-                    return item.ArmorComponent?.LegArmor ?? 0;
+                    score = element.GetModifiedLegArmor();
+                    break;
                 case ItemTypeEnum.HandArmor:
-                    return item.ArmorComponent?.ArmArmor ?? 0;
+                    score = element.GetModifiedArmArmor();
+                    break;
                 case ItemTypeEnum.Cape:
-                    return (item.ArmorComponent?.BodyArmor ?? 0) +
-                           (item.ArmorComponent?.ArmArmor ?? 0) * 0.5f;
+                    score = element.GetModifiedBodyArmor() +
+                            element.GetModifiedArmArmor();
+                    try { score += (int)item.Tier * 0.1f; } catch { /* Tier unavailable outside game */ }
+                    break;
                 case ItemTypeEnum.Horse:
                     return item.HorseComponent?.Speed ?? 0 +
                            (item.HorseComponent?.Maneuver ?? 0) * 0.5f +
                            (item.HorseComponent?.ChargeDamage ?? 0) * 0.3f;
                 case ItemTypeEnum.HorseHarness:
-                    return item.ArmorComponent?.BodyArmor ?? 0;
+                    score = element.GetModifiedMountBodyArmor();
+                    break;
                 default:
                     return item.Value;
             }
+
+            // Weight penalty — lighter armor scores higher
+            score -= element.Weight * 0.5f;
+
+            return score;
         }
 
         /// <summary>
         /// Scores a weapon element based on damage, speed, range, and tier.
-        /// Shields use a separate formula based on hit points and armor.
+        /// One Handed Polearms use a thrust-focused formula. Shields use hit points and armor.
+        /// A weight penalty is applied so lighter weapons score higher.
         /// </summary>
         /// <param name="element">The weapon equipment element to score.</param>
         /// <returns>A numeric score, or -1 if the element is empty.</returns>
@@ -811,7 +825,29 @@ namespace AutoEquipBest
 
             float score = 0f;
 
-            // Melee damage
+            // One Handed Polearm — thrust-only, no swing or missile stats
+            if (primary.WeaponClass == WeaponClass.OneHandedPolearm)
+            {
+                score += primary.ThrustDamage * 1.0f;
+                score += primary.ThrustSpeed * 0.75f;
+                score += primary.WeaponLength * 0.6f;
+                score += primary.Handling * 0.5f;
+                try { score += (int)item.Tier * 0.1f; } catch { /* Tier unavailable outside game */ }
+                score -= element.Weight * 0.5f;
+                return score;
+            }
+
+            // Shield — hit points and armor
+            if (item.ItemType == ItemTypeEnum.Shield)
+            {
+                score = primary.MaxDataValue * 1.0f +
+                        primary.BodyArmor * 2.0f;
+                try { score += (int)item.Tier * 10f; } catch { /* Tier unavailable outside game */ }
+                score -= element.Weight * 0.5f;
+                return score;
+            }
+
+            // General weapon formula
             score += primary.SwingDamage * 1.2f;
             score += primary.ThrustDamage * 1.0f;
             score += primary.SwingSpeed * 0.3f;
@@ -823,15 +859,11 @@ namespace AutoEquipBest
             score += primary.MissileSpeed * 0.5f;
             score += primary.MissileDamage * 1.0f;
 
-            // Shield bonus
-            if (item.ItemType == ItemTypeEnum.Shield)
-            {
-                score = primary.MaxDataValue * 1.0f + // hit points
-                        primary.BodyArmor * 2.0f;     // shield armor
-            }
-
             // Tier bonus
             try { score += (int)item.Tier * 10f; } catch { /* Tier unavailable outside game */ }
+
+            // Weight penalty — lighter weapons score higher
+            score -= element.Weight * 0.5f;
 
             return score;
         }
