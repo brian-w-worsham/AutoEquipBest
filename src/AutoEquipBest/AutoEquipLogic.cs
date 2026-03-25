@@ -192,14 +192,15 @@ namespace AutoEquipBest
             CharacterObject character,
             Hero hero)
         {
-            // Phase 1: For occupied slots, upgrade with same weapon type
+            // Phase 1: For occupied slots, upgrade with same weapon class
             for (var slot = EquipmentIndex.WeaponItemBeginSlot; slot <= EquipmentIndex.Weapon3; slot++)
             {
                 var current = equipment[slot];
                 if (current.IsEmpty) continue;
 
+                var weaponClass = GetPrimaryWeaponClass(current.Item);
                 int bestIdx = FindBestAvailableWeapon(
-                    available, hero, ScoreWeapon(current), current.Item.ItemType);
+                    available, hero, ScoreWeapon(current), weaponClass);
                 if (bestIdx >= 0)
                     TransferSwapWeapon(commands, available, current, bestIdx, slot, character);
             }
@@ -220,18 +221,18 @@ namespace AutoEquipBest
 
         /// <summary>
         /// Searches the available inventory snapshot for the highest-scoring weapon that exceeds
-        /// <paramref name="minScore"/>. Optionally filters by a specific weapon type.
+        /// <paramref name="minScore"/>. Optionally filters by a specific weapon class.
         /// </summary>
         /// <param name="available">Snapshot of available inventory items with remaining counts.</param>
         /// <param name="hero">The hero used for skill-based usability checks.</param>
         /// <param name="minScore">The minimum score a candidate must exceed to be selected.</param>
-        /// <param name="requiredType">If set, only items of this type are considered; otherwise any weapon type is accepted.</param>
+        /// <param name="requiredClass">If set, only weapons with this primary weapon class are considered; otherwise any weapon type is accepted.</param>
         /// <returns>The index into <paramref name="available"/> of the best weapon, or -1 if none qualifies.</returns>
         private static int FindBestAvailableWeapon(
             List<(ItemRosterElement element, int remaining)> available,
             Hero hero,
             float minScore,
-            ItemTypeEnum? requiredType)
+            WeaponClass? requiredClass)
         {
             int bestIdx = -1;
             float bestScore = minScore;
@@ -242,8 +243,8 @@ namespace AutoEquipBest
                 if (remaining <= 0) continue;
 
                 ItemObject item = el.EquipmentElement.Item;
-                if (requiredType.HasValue ? item.ItemType != requiredType.Value
-                                         : !IsWeaponType(item.ItemType))
+                if (requiredClass.HasValue ? GetPrimaryWeaponClass(item) != requiredClass.Value
+                                           : !IsWeaponType(item.ItemType))
                     continue;
                 if (!CanCharacterUseItem(item, hero)) continue;
 
@@ -493,14 +494,15 @@ namespace AutoEquipBest
         /// <param name="hero">Optional hero for skill-based usability checks.</param>
         internal static void EquipBestWeapons(Equipment equipment, ItemRoster roster, Hero hero = null)
         {
-            // Phase 1: For occupied slots, upgrade only with the same ItemType.
+            // Phase 1: For occupied slots, upgrade only with the same weapon class.
             for (var slot = EquipmentIndex.WeaponItemBeginSlot; slot <= EquipmentIndex.Weapon3; slot++)
             {
                 var current = equipment[slot];
                 if (current.IsEmpty) continue;
 
+                var weaponClass = GetPrimaryWeaponClass(current.Item);
                 int bestIndex = FindBestInRoster(
-                    roster, hero, ScoreWeapon(current), current.Item.ItemType);
+                    roster, hero, ScoreWeapon(current), weaponClass);
                 if (bestIndex >= 0)
                     DirectSwapWeapon(equipment, roster, current, bestIndex, slot);
             }
@@ -521,18 +523,18 @@ namespace AutoEquipBest
 
         /// <summary>
         /// Searches the item roster for the highest-scoring weapon that exceeds
-        /// <paramref name="minScore"/>. Optionally filters by a specific weapon type.
+        /// <paramref name="minScore"/>. Optionally filters by a specific weapon class.
         /// </summary>
         /// <param name="roster">The party item roster to search.</param>
         /// <param name="hero">The hero used for skill-based usability checks.</param>
         /// <param name="minScore">The minimum score a candidate must exceed to be selected.</param>
-        /// <param name="requiredType">If set, only items of this type are considered; otherwise any weapon type is accepted.</param>
+        /// <param name="requiredClass">If set, only weapons with this primary weapon class are considered; otherwise any weapon type is accepted.</param>
         /// <returns>The index into <paramref name="roster"/> of the best weapon, or -1 if none qualifies.</returns>
         private static int FindBestInRoster(
             ItemRoster roster,
             Hero hero,
             float minScore,
-            ItemTypeEnum? requiredType)
+            WeaponClass? requiredClass)
         {
             int bestIndex = -1;
             float bestScore = minScore;
@@ -544,8 +546,8 @@ namespace AutoEquipBest
 
                 ItemObject item = el.EquipmentElement.Item;
                 if (item == null) continue;
-                if (requiredType.HasValue ? item.ItemType != requiredType.Value
-                                         : !IsWeaponType(item.ItemType))
+                if (requiredClass.HasValue ? GetPrimaryWeaponClass(item) != requiredClass.Value
+                                           : !IsWeaponType(item.ItemType))
                     continue;
                 if (!CanCharacterUseItem(item, hero)) continue;
 
@@ -805,6 +807,8 @@ namespace AutoEquipBest
 
         /// <summary>
         /// Scores a weapon element based on damage, speed, range, and tier.
+        /// Uses modifier-aware stats (<c>GetModified*ForUsage</c>) so item prefixes
+        /// like "Rusty" or "Fine" are reflected in the score.
         /// One Handed Polearms use a thrust-focused formula. Shields use hit points and armor.
         /// A weight penalty is applied so lighter weapons score higher.
         /// </summary>
@@ -828,10 +832,10 @@ namespace AutoEquipBest
             // One Handed Polearm — thrust-only, no swing or missile stats
             if (primary.WeaponClass == WeaponClass.OneHandedPolearm)
             {
-                score += primary.ThrustDamage * 1.0f;
-                score += primary.ThrustSpeed * 0.75f;
+                score += element.GetModifiedThrustDamageForUsage(0) * 1.0f;
+                score += element.GetModifiedThrustSpeedForUsage(0) * 0.75f;
                 score += primary.WeaponLength * 0.6f;
-                score += primary.Handling * 0.5f;
+                score += element.GetModifiedHandlingForUsage(0) * 0.5f;
                 try { score += (int)item.Tier * 0.1f; } catch { /* Tier unavailable outside game */ }
                 score -= element.Weight * 0.5f;
                 return score;
@@ -840,7 +844,7 @@ namespace AutoEquipBest
             // Shield — hit points and armor
             if (item.ItemType == ItemTypeEnum.Shield)
             {
-                score = primary.MaxDataValue * 1.0f +
+                score = element.GetModifiedMaximumHitPointsForUsage(0) * 1.0f +
                         primary.BodyArmor * 2.0f;
                 try { score += (int)item.Tier * 10f; } catch { /* Tier unavailable outside game */ }
                 score -= element.Weight * 0.5f;
@@ -848,16 +852,16 @@ namespace AutoEquipBest
             }
 
             // General weapon formula
-            score += primary.SwingDamage * 1.2f;
-            score += primary.ThrustDamage * 1.0f;
-            score += primary.SwingSpeed * 0.3f;
-            score += primary.ThrustSpeed * 0.3f;
+            score += element.GetModifiedSwingDamageForUsage(0) * 1.2f;
+            score += element.GetModifiedThrustDamageForUsage(0) * 1.0f;
+            score += element.GetModifiedSwingSpeedForUsage(0) * 0.3f;
+            score += element.GetModifiedThrustSpeedForUsage(0) * 0.3f;
             score += primary.WeaponLength * 0.2f;
-            score += primary.Handling * 0.2f;
+            score += element.GetModifiedHandlingForUsage(0) * 0.2f;
 
             // Ranged bonus
-            score += primary.MissileSpeed * 0.5f;
-            score += primary.MissileDamage * 1.0f;
+            score += element.GetModifiedMissileSpeedForUsage(0) * 0.5f;
+            score += element.GetModifiedMissileDamageForUsage(0) * 1.0f;
 
             // Tier bonus
             try { score += (int)item.Tier * 10f; } catch { /* Tier unavailable outside game */ }

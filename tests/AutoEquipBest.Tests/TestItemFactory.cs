@@ -96,6 +96,33 @@ namespace AutoEquipBest.Tests
             return new EquipmentElement(item, null, null, false);
         }
 
+        /// <summary>
+        /// Wraps an <see cref="ItemObject"/> into an <see cref="EquipmentElement"/>
+        /// with the specified <see cref="ItemModifier"/> applied (e.g. "Rusty", "Fine").
+        /// </summary>
+        /// <param name="item">The base item.</param>
+        /// <param name="modifier">The item modifier to apply.</param>
+        /// <returns>An equipment element carrying the modifier.</returns>
+        public static EquipmentElement ToElementWithModifier(ItemObject item, ItemModifier modifier)
+        {
+            return new EquipmentElement(item, modifier, null, false);
+        }
+
+        /// <summary>
+        /// Creates an <see cref="ItemModifier"/> with optional damage and speed percentage offsets.
+        /// Positive values boost stats; negative values reduce them (e.g. -15 means 85% of base).
+        /// </summary>
+        /// <param name="damage">Damage percentage modifier (default 0 = no change).</param>
+        /// <param name="speed">Speed percentage modifier (default 0 = no change).</param>
+        /// <returns>A configured <see cref="ItemModifier"/>.</returns>
+        public static ItemModifier CreateModifier(int damage = 0, int speed = 0)
+        {
+            var modifier = new ItemModifier();
+            SetProperty(modifier, "Damage", damage);
+            SetProperty(modifier, "Speed", speed);
+            return modifier;
+        }
+
         /// <summary>Set a public field by name (e.g. "Type" on ItemObject).</summary>
         private static void SetField(object obj, string fieldName, object value)
         {

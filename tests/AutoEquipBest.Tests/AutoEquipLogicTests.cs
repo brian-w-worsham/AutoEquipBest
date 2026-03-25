@@ -168,6 +168,29 @@ namespace AutoEquipBest.Tests
             // 30 + 27 + 20 + 16 = 93
             Assert.True(score >= 93f, $"Expected >= 93 but got {score}");
         }
+
+        [Fact]
+        public void ScoreWeapon_NegativeModifier_ReducesScore()
+        {
+            var item = TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.OneHandedWeapon,
+                WeaponClass.OneHandedSword,
+                swingDamage: 100,
+                thrustDamage: 50,
+                swingSpeed: 90,
+                thrustSpeed: 80,
+                handling: 70);
+
+            var baseScore = AutoEquipLogic.ScoreWeapon(TestItemFactory.ToElement(item));
+
+            // Apply a negative modifier (e.g. "Rusty") that reduces damage and speed
+            var rustyModifier = TestItemFactory.CreateModifier(damage: -20, speed: -10);
+            var modifiedScore = AutoEquipLogic.ScoreWeapon(
+                TestItemFactory.ToElementWithModifier(item, rustyModifier));
+
+            Assert.True(modifiedScore < baseScore,
+                $"Modified score ({modifiedScore}) should be less than base score ({baseScore})");
+        }
     }
 
     public class AutoEquipLogicIsWeaponTypeTests
@@ -517,25 +540,47 @@ namespace AutoEquipBest.Tests
         }
 
         [Fact]
-        public void EquipBestWeapons_UpgradesWithSameItemType()
+        public void EquipBestWeapons_UpgradesWithSameWeaponClass()
         {
             var equipment = new Equipment();
             var roster = new ItemRoster();
 
-            // Character has a weak one-handed weapon
+            // Character has a weak one-handed sword
             var weakSword = TestItemFactory.CreateWeaponItem(
                 ItemTypeEnum.OneHandedWeapon, WeaponClass.OneHandedSword, swingDamage: 30);
             equipment[EquipmentIndex.WeaponItemBeginSlot] = TestItemFactory.ToElement(weakSword);
 
-            // Roster has a better one-handed weapon
+            // Roster has a better one-handed sword (same class)
             var betterSword = TestItemFactory.CreateWeaponItem(
                 ItemTypeEnum.OneHandedWeapon, WeaponClass.OneHandedSword, swingDamage: 100);
             roster.AddToCounts(betterSword, 1);
 
             AutoEquipLogic.EquipBestWeapons(equipment, roster);
 
-            // Should upgrade to the better one-handed weapon
+            // Should upgrade to the better one-handed sword
             Assert.Equal(betterSword, equipment[EquipmentIndex.WeaponItemBeginSlot].Item);
+        }
+
+        [Fact]
+        public void EquipBestWeapons_DoesNotReplaceSwordWithAxe()
+        {
+            var equipment = new Equipment();
+            var roster = new ItemRoster();
+
+            // Character has a one-handed sword equipped
+            var sword = TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.OneHandedWeapon, WeaponClass.OneHandedSword, swingDamage: 40);
+            equipment[EquipmentIndex.WeaponItemBeginSlot] = TestItemFactory.ToElement(sword);
+
+            // Roster has a much better one-handed axe (same ItemType, different WeaponClass)
+            var betterAxe = TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.OneHandedWeapon, WeaponClass.OneHandedAxe, swingDamage: 200);
+            roster.AddToCounts(betterAxe, 1);
+
+            AutoEquipLogic.EquipBestWeapons(equipment, roster);
+
+            // Sword should NOT be replaced by the axe — different weapon class
+            Assert.Equal(sword, equipment[EquipmentIndex.WeaponItemBeginSlot].Item);
         }
 
         [Fact]
