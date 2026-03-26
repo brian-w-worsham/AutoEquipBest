@@ -53,6 +53,16 @@ dotnet test tests\AutoEquipBest.Tests\AutoEquipBest.Tests.csproj
 - **Test items:** Use `TestItemFactory` helpers (`CreateArmorItem`, `CreateWeaponItem`, `CreateSimpleItem`, `ToElement`, `ToElementWithModifier`, `CreateModifier`) — never construct game objects directly in tests
 - **Analyzer compliance:** Keep methods below cognitive complexity thresholds; extract helpers when needed
 
+## Post-Change Workflow
+
+After making any code changes, always follow these steps in order:
+
+1. **Build:** `dotnet build src\AutoEquipBest\AutoEquipBest.csproj -c Release`
+2. **Test:** `dotnet test tests\AutoEquipBest.Tests\AutoEquipBest.Tests.csproj` — confirm all tests pass before proceeding
+3. **Deploy:** `./deploy.ps1` — copies the built DLL to the game's module folder
+
+Do not deploy if the build fails or any tests are failing.
+
 ## Testing Guidelines
 
 - Tests use `InternalsVisibleTo` to access `internal` methods
