@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <TargetFramework>net472</TargetFramework>
-    <LangVersion>10.0</LangVersion>
+    <LangVersion>9.0</LangVersion>
     <Nullable>disable</Nullable>
     <IsPackable>false</IsPackable>
     <GameFolder>C:\Games\steamapps\common\Mount &amp; Blade II Bannerlord</GameFolder>
