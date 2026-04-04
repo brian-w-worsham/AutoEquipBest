@@ -793,8 +793,10 @@ namespace AutoEquipBest
                            (item.HorseComponent?.Maneuver ?? 0) * 0.5f +
                            (item.HorseComponent?.ChargeDamage ?? 0) * 0.3f;
                 case ItemTypeEnum.HorseHarness:
-                    score = element.GetModifiedMountBodyArmor();
-                    break;
+                    score = element.GetModifiedMountBodyArmor() * 10f;
+                    try { score += (int)item.Tier * 2f; } catch { /* Tier unavailable outside game */ }
+                    score -= element.Weight * 0.1f;
+                    return score;
                 default:
                     return item.Value;
             }

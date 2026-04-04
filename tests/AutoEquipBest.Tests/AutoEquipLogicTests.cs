@@ -81,7 +81,7 @@ namespace AutoEquipBest.Tests
 
             var score = AutoEquipLogic.ScoreItem(element, ItemTypeEnum.HorseHarness);
 
-            Assert.Equal(30f, score);
+            Assert.Equal(300f, score);
         }
 
         [Fact]
