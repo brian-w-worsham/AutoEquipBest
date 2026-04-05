@@ -40,8 +40,7 @@ namespace AutoEquipBest
             EquipBestForSlot(equipment, partyInventory, EquipmentIndex.Cape, ItemTypeEnum.Cape, hero);
 
             // --- Horse ---
-            EquipBestForSlot(equipment, partyInventory, EquipmentIndex.Horse, ItemTypeEnum.Horse, hero);
-            EquipBestForSlot(equipment, partyInventory, EquipmentIndex.HorseHarness, ItemTypeEnum.HorseHarness, hero);
+            ApplyMountPreference(equipment, partyInventory, ShouldEquipMount(hero), hero);
 
             // --- Weapons (slots 0-3) ---
             EquipBestWeapons(equipment, partyInventory, hero);
@@ -90,8 +89,7 @@ namespace AutoEquipBest
             CollectSlotCommands(commands, available, equipment, character, EquipmentIndex.Leg, ItemTypeEnum.LegArmor, hero);
             CollectSlotCommands(commands, available, equipment, character, EquipmentIndex.Gloves, ItemTypeEnum.HandArmor, hero);
             CollectSlotCommands(commands, available, equipment, character, EquipmentIndex.Cape, ItemTypeEnum.Cape, hero);
-            CollectSlotCommands(commands, available, equipment, character, EquipmentIndex.Horse, ItemTypeEnum.Horse, hero);
-            CollectSlotCommands(commands, available, equipment, character, EquipmentIndex.HorseHarness, ItemTypeEnum.HorseHarness, hero);
+            ApplyMountPreferenceViaInventory(commands, available, equipment, character, ShouldEquipMount(hero), hero);
 
             // --- Weapons ---
             CollectWeaponCommands(commands, available, equipment, character, hero);
@@ -176,6 +174,63 @@ namespace AutoEquipBest
         }
 
         /// <summary>
+        /// Applies the mount preference in the inventory screen.
+        /// When mounts are preferred, equips the best horse and harness; otherwise removes both.
+        /// </summary>
+        /// <param name="commands">The list to append generated transfer commands to.</param>
+        /// <param name="available">Snapshot of available inventory items with remaining counts.</param>
+        /// <param name="equipment">The character's current battle equipment.</param>
+        /// <param name="character">The character to generate transfer commands for.</param>
+        /// <param name="shouldEquipMount">Whether the character should remain mounted.</param>
+        /// <param name="hero">The hero used for skill-based usability checks.</param>
+        internal static void ApplyMountPreferenceViaInventory(
+            List<TransferCommand> commands,
+            List<(ItemRosterElement element, int remaining)> available,
+            Equipment equipment,
+            CharacterObject character,
+            bool shouldEquipMount,
+            Hero hero = null)
+        {
+            if (commands == null || available == null || equipment == null)
+                return;
+
+            if (shouldEquipMount)
+            {
+                CollectSlotCommands(commands, available, equipment, character, EquipmentIndex.Horse, ItemTypeEnum.Horse, hero);
+                CollectSlotCommands(commands, available, equipment, character, EquipmentIndex.HorseHarness, ItemTypeEnum.HorseHarness, hero);
+                return;
+            }
+
+            CollectUnequipSlotCommand(commands, equipment, character, EquipmentIndex.HorseHarness);
+            CollectUnequipSlotCommand(commands, equipment, character, EquipmentIndex.Horse);
+        }
+
+        /// <summary>
+        /// Builds a transfer command that removes the current item from a single equipment slot.
+        /// </summary>
+        /// <param name="commands">The list to append generated transfer commands to.</param>
+        /// <param name="equipment">The character's current battle equipment.</param>
+        /// <param name="character">The character to generate transfer commands for.</param>
+        /// <param name="slot">The equipment slot to clear.</param>
+        private static void CollectUnequipSlotCommand(
+            List<TransferCommand> commands,
+            Equipment equipment,
+            CharacterObject character,
+            EquipmentIndex slot)
+        {
+            EquipmentElement current = equipment[slot];
+            if (current.IsEmpty)
+                return;
+
+            commands.Add(TransferCommand.Transfer(
+                1,
+                InventoryLogic.InventorySide.BattleEquipment,
+                InventoryLogic.InventorySide.PlayerInventory,
+                new ItemRosterElement(current, 1),
+                slot, EquipmentIndex.None, character));
+        }
+
+        /// <summary>
         /// Builds transfer commands to equip the best weapons across all four weapon slots.
         /// Phase 1 upgrades occupied slots with the same weapon type, Phase 2 fills empty slots,
         /// and Phase 3 guarantees at least one melee weapon is equipped.
@@ -210,7 +265,10 @@ namespace AutoEquipBest
             {
                 if (!equipment[slot].IsEmpty) continue;
 
-                int bestIdx = FindBestAvailableWeapon(available, hero, -1f, null);
+                bool allowShield = CanEquipAnotherShield(equipment, commands);
+                    bool allowCrossbow = CanEquipAnotherCrossbow(equipment, commands);
+                    bool allowBow = CanEquipAnotherBow(equipment, commands);
+                    int bestIdx = FindBestAvailableWeapon(available, hero, -1f, null, allowShield, allowCrossbow, allowBow);
                 if (bestIdx >= 0)
                     TransferEquipWeapon(commands, available, bestIdx, slot, character);
             }
@@ -232,31 +290,52 @@ namespace AutoEquipBest
             List<(ItemRosterElement element, int remaining)> available,
             Hero hero,
             float minScore,
-            WeaponClass? requiredClass)
+            WeaponClass? requiredClass,
+            bool allowShield = true,
+            bool allowCrossbow = true,
+            bool allowBow = true)
         {
             int bestIdx = -1;
             float bestScore = minScore;
 
-            for (int i = 0; i < available.Count; i++)
+            foreach (var candidate in EnumerateAvailableWeaponCandidates(available, hero, requiredClass, allowShield, allowCrossbow, allowBow))
             {
-                var (el, remaining) = available[i];
-                if (remaining <= 0) continue;
-
-                ItemObject item = el.EquipmentElement.Item;
-                if (requiredClass.HasValue ? GetPrimaryWeaponClass(item) != requiredClass.Value
-                                           : !IsWeaponType(item.ItemType))
+                float score = ScoreWeapon(candidate.element.EquipmentElement);
+                if (score <= bestScore)
                     continue;
-                if (!CanCharacterUseItem(item, hero)) continue;
 
-                float score = ScoreWeapon(el.EquipmentElement);
-                if (score > bestScore)
-                {
-                    bestScore = score;
-                    bestIdx = i;
-                }
+                bestScore = score;
+                bestIdx = candidate.index;
             }
 
             return bestIdx;
+        }
+
+        /// <summary>
+        /// Enumerates usable weapon candidates from the available inventory snapshot.
+        /// </summary>
+        /// <param name="available">Snapshot of available inventory items with remaining counts.</param>
+        /// <param name="hero">The hero used for skill-based usability checks.</param>
+        /// <param name="requiredClass">Optional weapon class restriction for the slot.</param>
+        /// <param name="allowShield">Whether shield items are allowed for this selection.</param>
+        /// <returns>Candidate roster elements paired with their source index.</returns>
+        private static IEnumerable<(int index, ItemRosterElement element)> EnumerateAvailableWeaponCandidates(
+            List<(ItemRosterElement element, int remaining)> available,
+            Hero hero,
+            WeaponClass? requiredClass,
+            bool allowShield,
+            bool allowCrossbow,
+            bool allowBow)
+        {
+            for (int i = 0; i < available.Count; i++)
+            {
+                var candidate = available[i];
+                ItemObject item = candidate.element.EquipmentElement.Item;
+                if (!IsUsableWeaponCandidate(candidate.remaining, item, hero, requiredClass, allowShield, allowCrossbow, allowBow))
+                    continue;
+
+                yield return (i, candidate.element);
+            }
         }
 
         /// <summary>
@@ -485,6 +564,50 @@ namespace AutoEquipBest
         }
 
         /// <summary>
+        /// Applies the mount preference for direct equipment modification.
+        /// When mounts are preferred, equips the best horse and harness; otherwise removes both.
+        /// </summary>
+        /// <param name="equipment">The character's battle equipment to modify.</param>
+        /// <param name="roster">The party item roster to search and update.</param>
+        /// <param name="shouldEquipMount">Whether the character should remain mounted.</param>
+        /// <param name="hero">Optional hero for skill-based usability checks.</param>
+        internal static void ApplyMountPreference(
+            Equipment equipment,
+            ItemRoster roster,
+            bool shouldEquipMount,
+            Hero hero = null)
+        {
+            if (equipment == null || roster == null)
+                return;
+
+            if (shouldEquipMount)
+            {
+                EquipBestForSlot(equipment, roster, EquipmentIndex.Horse, ItemTypeEnum.Horse, hero);
+                EquipBestForSlot(equipment, roster, EquipmentIndex.HorseHarness, ItemTypeEnum.HorseHarness, hero);
+                return;
+            }
+
+            UnequipSlot(equipment, roster, EquipmentIndex.HorseHarness);
+            UnequipSlot(equipment, roster, EquipmentIndex.Horse);
+        }
+
+        /// <summary>
+        /// Removes the currently equipped item from a slot and returns it to the roster.
+        /// </summary>
+        /// <param name="equipment">The character's battle equipment to modify.</param>
+        /// <param name="roster">The party item roster to update.</param>
+        /// <param name="slot">The equipment slot to clear.</param>
+        private static void UnequipSlot(Equipment equipment, ItemRoster roster, EquipmentIndex slot)
+        {
+            EquipmentElement currentElement = equipment[slot];
+            if (currentElement.IsEmpty)
+                return;
+
+            roster.AddToCounts(currentElement, 1);
+            equipment[slot] = default;
+        }
+
+        /// <summary>
         /// Directly equips the best weapons across all four weapon slots.
         /// Phase 1 upgrades occupied slots with the same weapon type, Phase 2 fills empty slots,
         /// and Phase 3 guarantees at least one melee weapon is equipped.
@@ -512,7 +635,10 @@ namespace AutoEquipBest
             {
                 if (!equipment[slot].IsEmpty) continue;
 
-                int bestIndex = FindBestInRoster(roster, hero, -1f, null);
+                bool allowShield = CanEquipAnotherShield(equipment);
+                bool allowCrossbow = CanEquipAnotherCrossbow(equipment);
+                bool allowBow = CanEquipAnotherBow(equipment);
+                int bestIndex = FindBestInRoster(roster, hero, -1f, null, allowShield, allowCrossbow, allowBow);
                 if (bestIndex >= 0)
                     DirectEquipWeapon(equipment, roster, bestIndex, slot);
             }
@@ -534,32 +660,114 @@ namespace AutoEquipBest
             ItemRoster roster,
             Hero hero,
             float minScore,
-            WeaponClass? requiredClass)
+            WeaponClass? requiredClass,
+            bool allowShield = true,
+            bool allowCrossbow = true,
+            bool allowBow = true)
         {
             int bestIndex = -1;
             float bestScore = minScore;
 
-            for (int i = 0; i < roster.Count; i++)
+            foreach (var candidate in EnumerateRosterWeaponCandidates(roster, hero, requiredClass, allowShield, allowCrossbow, allowBow))
             {
-                ItemRosterElement el = roster[i];
-                if (el.Amount <= 0) continue;
-
-                ItemObject item = el.EquipmentElement.Item;
-                if (item == null) continue;
-                if (requiredClass.HasValue ? GetPrimaryWeaponClass(item) != requiredClass.Value
-                                           : !IsWeaponType(item.ItemType))
+                float score = ScoreWeapon(candidate.element.EquipmentElement);
+                if (score <= bestScore)
                     continue;
-                if (!CanCharacterUseItem(item, hero)) continue;
 
-                float score = ScoreWeapon(el.EquipmentElement);
-                if (score > bestScore)
-                {
-                    bestScore = score;
-                    bestIndex = i;
-                }
+                bestScore = score;
+                bestIndex = candidate.index;
             }
 
             return bestIndex;
+        }
+
+        /// <summary>
+        /// Enumerates usable weapon candidates from the party roster.
+        /// </summary>
+        /// <param name="roster">The party item roster to search.</param>
+        /// <param name="hero">The hero used for skill-based usability checks.</param>
+        /// <param name="requiredClass">Optional weapon class restriction for the slot.</param>
+        /// <param name="allowShield">Whether shield items are allowed for this selection.</param>
+        /// <returns>Candidate roster elements paired with their source index.</returns>
+        private static IEnumerable<(int index, ItemRosterElement element)> EnumerateRosterWeaponCandidates(
+            ItemRoster roster,
+            Hero hero,
+            WeaponClass? requiredClass,
+            bool allowShield,
+            bool allowCrossbow,
+            bool allowBow)
+        {
+            for (int i = 0; i < roster.Count; i++)
+            {
+                ItemRosterElement candidate = roster[i];
+                ItemObject item = candidate.EquipmentElement.Item;
+                if (!IsUsableWeaponCandidate(candidate.Amount, item, hero, requiredClass, allowShield, allowCrossbow, allowBow))
+                    continue;
+
+                yield return (i, candidate);
+            }
+        }
+
+        /// <summary>
+        /// Determines whether a weapon candidate can be considered for equipping.
+        /// </summary>
+        /// <param name="availableCount">The remaining count available to equip.</param>
+        /// <param name="item">The item to inspect.</param>
+        /// <param name="hero">The hero used for skill-based usability checks.</param>
+        /// <param name="requiredClass">Optional weapon class restriction for the slot.</param>
+        /// <param name="allowShield">Whether shield items are allowed for this selection.</param>
+        /// <returns><c>true</c> if the candidate is usable; otherwise <c>false</c>.</returns>
+        private static bool IsUsableWeaponCandidate(
+            int availableCount,
+            ItemObject item,
+            Hero hero,
+            WeaponClass? requiredClass,
+            bool allowShield,
+            bool allowCrossbow,
+            bool allowBow)
+        {
+            if (availableCount <= 0)
+                return false;
+
+            if (!IsEligibleWeaponCandidate(item, requiredClass, allowShield, allowCrossbow, allowBow))
+                return false;
+
+            return CanCharacterUseItem(item, hero);
+        }
+
+        /// <summary>
+        /// Determines whether an item is eligible to be chosen as a weapon candidate for a slot.
+        /// </summary>
+        /// <param name="item">The item to inspect.</param>
+        /// <param name="requiredClass">Optional weapon class restriction for the slot.</param>
+        /// <param name="allowShield">Whether shield items are allowed for this selection.</param>
+        /// <returns><c>true</c> if the item can be considered; otherwise <c>false</c>.</returns>
+        private static bool IsEligibleWeaponCandidate(
+            ItemObject item,
+            WeaponClass? requiredClass,
+            bool allowShield,
+            bool allowCrossbow,
+            bool allowBow)
+        {
+            if (item == null)
+                return false;
+
+            if (requiredClass.HasValue)
+                return GetPrimaryWeaponClass(item) == requiredClass.Value;
+
+            if (!IsWeaponType(item.ItemType))
+                return false;
+
+            if (!allowShield && item.ItemType == ItemTypeEnum.Shield)
+                return false;
+
+            if (!allowCrossbow && item.ItemType == ItemTypeEnum.Crossbow)
+                return false;
+
+            if (!allowBow && item.ItemType == ItemTypeEnum.Bow)
+                return false;
+
+            return true;
         }
 
         /// <summary>
@@ -925,6 +1133,169 @@ namespace AutoEquipBest
                     return true;
                 default:
                     return false;
+            }
+        }
+
+        /// <summary>
+        /// Determines whether another shield can be added to the current weapon loadout.
+        /// </summary>
+        /// <param name="equipment">The current weapon loadout.</param>
+        /// <param name="commands">Queued transfer commands for the current auto-equip operation.</param>
+        /// <returns><c>true</c> if no shield is equipped or already queued to equip; otherwise <c>false</c>.</returns>
+        internal static bool CanEquipAnotherShield(Equipment equipment, IEnumerable<TransferCommand> commands = null)
+        {
+            return CanEquipAnotherWeaponType(equipment, commands, ItemTypeEnum.Shield);
+        }
+
+        /// <summary>
+        /// Determines whether another crossbow can be added to the current weapon loadout.
+        /// </summary>
+        /// <param name="equipment">The current weapon loadout.</param>
+        /// <param name="commands">Queued transfer commands for the current auto-equip operation.</param>
+        /// <returns><c>true</c> if no crossbow is equipped or already queued to equip; otherwise <c>false</c>.</returns>
+        internal static bool CanEquipAnotherCrossbow(Equipment equipment, IEnumerable<TransferCommand> commands = null)
+        {
+            return CanEquipAnotherWeaponType(equipment, commands, ItemTypeEnum.Crossbow);
+        }
+
+        /// <summary>
+        /// Determines whether another bow can be added to the current weapon loadout.
+        /// </summary>
+        /// <param name="equipment">The current weapon loadout.</param>
+        /// <param name="commands">Queued transfer commands for the current auto-equip operation.</param>
+        /// <returns><c>true</c> if no bow is equipped or already queued to equip; otherwise <c>false</c>.</returns>
+        internal static bool CanEquipAnotherBow(Equipment equipment, IEnumerable<TransferCommand> commands = null)
+        {
+            return CanEquipAnotherWeaponType(equipment, commands, ItemTypeEnum.Bow);
+        }
+
+        /// <summary>
+        /// Determines whether another item of a constrained weapon type can be added when inventory-transfer commands are already queued.
+        /// </summary>
+        /// <param name="equipment">The current weapon loadout.</param>
+        /// <param name="commands">Queued transfer commands for the current auto-equip operation.</param>
+        /// <param name="itemType">The weapon item type to constrain.</param>
+        /// <returns><c>true</c> if no matching item is equipped or already queued to equip; otherwise <c>false</c>.</returns>
+        private static bool CanEquipAnotherWeaponType(
+            Equipment equipment,
+            IEnumerable<TransferCommand> commands,
+            ItemTypeEnum itemType)
+        {
+            if (HasEquippedWeaponType(equipment, itemType))
+                return false;
+
+            if (commands == null)
+                return true;
+
+            foreach (TransferCommand command in commands)
+            {
+                if (command.ToSide != InventoryLogic.InventorySide.BattleEquipment)
+                    continue;
+
+                if (command.ToEquipmentIndex < EquipmentIndex.WeaponItemBeginSlot ||
+                    command.ToEquipmentIndex > EquipmentIndex.Weapon3)
+                    continue;
+
+                if (command.ElementToTransfer.EquipmentElement.Item?.ItemType == itemType)
+                    return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Checks whether any equipped weapon slot currently contains the specified item type.
+        /// </summary>
+        /// <param name="equipment">The weapon loadout to inspect.</param>
+        /// <param name="itemType">The weapon item type to look for.</param>
+        /// <returns><c>true</c> if a matching item is equipped; otherwise <c>false</c>.</returns>
+        private static bool HasEquippedWeaponType(Equipment equipment, ItemTypeEnum itemType)
+        {
+            if (equipment == null)
+                return false;
+
+            for (var slot = EquipmentIndex.WeaponItemBeginSlot; slot <= EquipmentIndex.Weapon3; slot++)
+            {
+                if (!equipment[slot].IsEmpty && equipment[slot].Item?.ItemType == itemType)
+                    return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Determines whether a character should equip a mount based on Athletics and Riding.
+        /// Riding must be strictly higher than Athletics to keep a horse and harness equipped.
+        /// </summary>
+        /// <param name="athleticsSkill">The Athletics skill value.</param>
+        /// <param name="ridingSkill">The Riding skill value.</param>
+        /// <returns><c>true</c> if the character should equip a horse and harness; otherwise <c>false</c>.</returns>
+        internal static bool ShouldEquipMount(int athleticsSkill, int ridingSkill)
+        {
+            return ridingSkill > athleticsSkill;
+        }
+
+        /// <summary>
+        /// Determines whether a hero should equip a mount based on Athletics and Riding.
+        /// If the required skill objects are unavailable, preserves the previous behavior and allows mounts.
+        /// </summary>
+        /// <param name="hero">The hero to inspect.</param>
+        /// <returns><c>true</c> if the hero should equip a horse and harness; otherwise <c>false</c>.</returns>
+        private static bool ShouldEquipMount(Hero hero)
+        {
+            if (hero == null)
+                return true;
+
+            if (!TryGetHeroSkill(hero, GetAthleticsSkillSafe(), out int athleticsSkill))
+                return true;
+
+            if (!TryGetHeroSkill(hero, GetRidingSkillSafe(), out int ridingSkill))
+                return true;
+
+            return ShouldEquipMount(athleticsSkill, ridingSkill);
+        }
+
+        /// <summary>
+        /// Safely resolves the Athletics skill object when the default skill registry is initialized.
+        /// </summary>
+        /// <returns>The Athletics skill object, or <c>null</c> if it is unavailable.</returns>
+        private static SkillObject GetAthleticsSkillSafe()
+        {
+            try { return DefaultSkills.Athletics; }
+            catch { return null; }
+        }
+
+        /// <summary>
+        /// Safely resolves the Riding skill object when the default skill registry is initialized.
+        /// </summary>
+        /// <returns>The Riding skill object, or <c>null</c> if it is unavailable.</returns>
+        private static SkillObject GetRidingSkillSafe()
+        {
+            try { return DefaultSkills.Riding; }
+            catch { return null; }
+        }
+
+        /// <summary>
+        /// Reads a hero skill value without assuming the Bannerlord skill registry is initialized.
+        /// </summary>
+        /// <param name="hero">The hero whose skill value should be read.</param>
+        /// <param name="skill">The skill object to query.</param>
+        /// <param name="skillValue">The resolved skill value when available.</param>
+        /// <returns><c>true</c> if the skill value could be read; otherwise <c>false</c>.</returns>
+        private static bool TryGetHeroSkill(Hero hero, SkillObject skill, out int skillValue)
+        {
+            skillValue = 0;
+            if (hero == null || skill == null)
+                return false;
+
+            try
+            {
+                skillValue = hero.GetSkillValue(skill);
+                return true;
+            }
+            catch
+            {
+                return false;
             }
         }
 

@@ -1,4 +1,6 @@
+using System.Collections.Generic;
 using Xunit;
+using TaleWorlds.CampaignSystem.Inventory;
 using TaleWorlds.Core;
 using TaleWorlds.CampaignSystem.Roster;
 using static TaleWorlds.Core.ItemObject;
@@ -375,6 +377,100 @@ namespace AutoEquipBest.Tests
         }
     }
 
+    public class AutoEquipLogicMountPreferenceTests
+    {
+        [Theory]
+        [InlineData(40, 80, true)]
+        [InlineData(80, 40, false)]
+        [InlineData(60, 60, false)]
+        public void ShouldEquipMount_ReturnsExpected(int athleticsSkill, int ridingSkill, bool expected)
+        {
+            Assert.Equal(expected, AutoEquipLogic.ShouldEquipMount(athleticsSkill, ridingSkill));
+        }
+
+        [Fact]
+        public void ApplyMountPreference_MountsNotPreferred_RemovesHorseAndHarness()
+        {
+            var equipment = new Equipment();
+            var roster = new ItemRoster();
+            var horse = TestItemFactory.CreateHorseItem(speed: 50, maneuver: 55, chargeDamage: 20);
+            var harness = TestItemFactory.CreateArmorItem(ItemTypeEnum.HorseHarness, bodyArmor: 12);
+
+            equipment[EquipmentIndex.Horse] = TestItemFactory.ToElement(horse);
+            equipment[EquipmentIndex.HorseHarness] = TestItemFactory.ToElement(harness);
+
+            AutoEquipLogic.ApplyMountPreference(equipment, roster, shouldEquipMount: false);
+
+            Assert.True(equipment[EquipmentIndex.Horse].IsEmpty);
+            Assert.True(equipment[EquipmentIndex.HorseHarness].IsEmpty);
+            Assert.Equal(1, roster.GetItemNumber(horse));
+            Assert.Equal(1, roster.GetItemNumber(harness));
+        }
+
+        [Fact]
+        public void ApplyMountPreferenceViaInventory_MountsPreferred_QueuesHorseAndHarnessEquips()
+        {
+            var equipment = new Equipment();
+            var commands = new List<TransferCommand>();
+            var horse = TestItemFactory.CreateHorseItem(speed: 55, maneuver: 60, chargeDamage: 25);
+            var harness = TestItemFactory.CreateArmorItem(ItemTypeEnum.HorseHarness, bodyArmor: 15);
+            var available = new List<(ItemRosterElement element, int remaining)>
+            {
+                (new ItemRosterElement(TestItemFactory.ToElement(horse), 1), 1),
+                (new ItemRosterElement(TestItemFactory.ToElement(harness), 1), 1)
+            };
+
+            AutoEquipLogic.ApplyMountPreferenceViaInventory(
+                commands,
+                available,
+                equipment,
+                character: null,
+                shouldEquipMount: true);
+
+            Assert.Equal(2, commands.Count);
+            Assert.Equal(InventoryLogic.InventorySide.PlayerInventory, commands[0].FromSide);
+            Assert.Equal(InventoryLogic.InventorySide.BattleEquipment, commands[0].ToSide);
+            Assert.Equal(EquipmentIndex.Horse, commands[0].ToEquipmentIndex);
+            Assert.Equal(horse, commands[0].ElementToTransfer.EquipmentElement.Item);
+
+            Assert.Equal(InventoryLogic.InventorySide.PlayerInventory, commands[1].FromSide);
+            Assert.Equal(InventoryLogic.InventorySide.BattleEquipment, commands[1].ToSide);
+            Assert.Equal(EquipmentIndex.HorseHarness, commands[1].ToEquipmentIndex);
+            Assert.Equal(harness, commands[1].ElementToTransfer.EquipmentElement.Item);
+        }
+
+        [Fact]
+        public void ApplyMountPreferenceViaInventory_MountsNotPreferred_QueuesHorseAndHarnessUnequips()
+        {
+            var equipment = new Equipment();
+            var commands = new List<TransferCommand>();
+            var available = new List<(ItemRosterElement element, int remaining)>();
+            var horse = TestItemFactory.CreateHorseItem(speed: 48, maneuver: 52, chargeDamage: 18);
+            var harness = TestItemFactory.CreateArmorItem(ItemTypeEnum.HorseHarness, bodyArmor: 10);
+
+            equipment[EquipmentIndex.Horse] = TestItemFactory.ToElement(horse);
+            equipment[EquipmentIndex.HorseHarness] = TestItemFactory.ToElement(harness);
+
+            AutoEquipLogic.ApplyMountPreferenceViaInventory(
+                commands,
+                available,
+                equipment,
+                character: null,
+                shouldEquipMount: false);
+
+            Assert.Equal(2, commands.Count);
+            Assert.Equal(InventoryLogic.InventorySide.BattleEquipment, commands[0].FromSide);
+            Assert.Equal(InventoryLogic.InventorySide.PlayerInventory, commands[0].ToSide);
+            Assert.Equal(EquipmentIndex.HorseHarness, commands[0].FromEquipmentIndex);
+            Assert.Equal(harness, commands[0].ElementToTransfer.EquipmentElement.Item);
+
+            Assert.Equal(InventoryLogic.InventorySide.BattleEquipment, commands[1].FromSide);
+            Assert.Equal(InventoryLogic.InventorySide.PlayerInventory, commands[1].ToSide);
+            Assert.Equal(EquipmentIndex.Horse, commands[1].FromEquipmentIndex);
+            Assert.Equal(horse, commands[1].ElementToTransfer.EquipmentElement.Item);
+        }
+    }
+
     public class AutoEquipLogicEquipBestWeaponsTests
     {
         [Fact]
@@ -537,6 +633,165 @@ namespace AutoEquipBest.Tests
 
             // Shield should NOT be replaced by the sword
             Assert.Equal(shield, equipment[EquipmentIndex.WeaponItemBeginSlot].Item);
+        }
+
+        [Fact]
+        public void EquipBestWeapons_DoesNotEquipMoreThanOneShield()
+        {
+            var equipment = new Equipment();
+            var roster = new ItemRoster();
+
+            var firstShield = TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.Shield, WeaponClass.SmallShield, maxDataValue: 100, bodyArmor: 10);
+            var secondShield = TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.Shield, WeaponClass.SmallShield, maxDataValue: 120, bodyArmor: 12);
+            var sword = TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.OneHandedWeapon, WeaponClass.OneHandedSword, swingDamage: 60);
+
+            roster.AddToCounts(firstShield, 1);
+            roster.AddToCounts(secondShield, 1);
+            roster.AddToCounts(sword, 1);
+
+            AutoEquipLogic.EquipBestWeapons(equipment, roster);
+
+            int shieldCount = 0;
+            for (var slot = EquipmentIndex.WeaponItemBeginSlot; slot <= EquipmentIndex.Weapon3; slot++)
+            {
+                if (!equipment[slot].IsEmpty && equipment[slot].Item.ItemType == ItemTypeEnum.Shield)
+                    shieldCount++;
+            }
+
+            Assert.Equal(1, shieldCount);
+            Assert.True(roster.GetItemNumber(firstShield) + roster.GetItemNumber(secondShield) >= 1);
+        }
+
+        [Fact]
+        public void EquipBestWeapons_DoesNotEquipSecondCrossbow()
+        {
+            var equipment = new Equipment();
+            var roster = new ItemRoster();
+
+            var equippedCrossbow = TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.Crossbow, WeaponClass.Crossbow, missileSpeed: 75);
+            var spareCrossbow = TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.Crossbow, WeaponClass.Crossbow, missileSpeed: 95);
+            var bolts = TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.Bolts, WeaponClass.Bolt, maxDataValue: 30);
+            var sword = TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.OneHandedWeapon, WeaponClass.OneHandedSword, swingDamage: 65);
+
+            equipment[EquipmentIndex.WeaponItemBeginSlot] = TestItemFactory.ToElement(equippedCrossbow);
+            roster.AddToCounts(spareCrossbow, 1);
+            roster.AddToCounts(bolts, 1);
+            roster.AddToCounts(sword, 1);
+
+            AutoEquipLogic.EquipBestWeapons(equipment, roster);
+
+            int crossbowCount = 0;
+            for (var slot = EquipmentIndex.WeaponItemBeginSlot; slot <= EquipmentIndex.Weapon3; slot++)
+            {
+                if (!equipment[slot].IsEmpty && equipment[slot].Item.ItemType == ItemTypeEnum.Crossbow)
+                    crossbowCount++;
+            }
+
+            Assert.Equal(1, crossbowCount);
+            Assert.True(roster.GetItemNumber(equippedCrossbow) + roster.GetItemNumber(spareCrossbow) >= 1);
+        }
+
+        [Fact]
+        public void EquipBestWeapons_DoesNotEquipSecondBow()
+        {
+            var equipment = new Equipment();
+            var roster = new ItemRoster();
+
+            var equippedBow = TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.Bow, WeaponClass.Bow, missileSpeed: 75);
+            var spareBow = TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.Bow, WeaponClass.Bow, missileSpeed: 95);
+            var arrows = TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.Arrows, WeaponClass.Arrow, maxDataValue: 30);
+            var sword = TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.OneHandedWeapon, WeaponClass.OneHandedSword, swingDamage: 65);
+
+            equipment[EquipmentIndex.WeaponItemBeginSlot] = TestItemFactory.ToElement(equippedBow);
+            roster.AddToCounts(spareBow, 1);
+            roster.AddToCounts(arrows, 1);
+            roster.AddToCounts(sword, 1);
+
+            AutoEquipLogic.EquipBestWeapons(equipment, roster);
+
+            int bowCount = 0;
+            for (var slot = EquipmentIndex.WeaponItemBeginSlot; slot <= EquipmentIndex.Weapon3; slot++)
+            {
+                if (!equipment[slot].IsEmpty && equipment[slot].Item.ItemType == ItemTypeEnum.Bow)
+                    bowCount++;
+            }
+
+            Assert.Equal(1, bowCount);
+            Assert.True(roster.GetItemNumber(equippedBow) + roster.GetItemNumber(spareBow) >= 1);
+        }
+
+        [Fact]
+        public void CanEquipAnotherShield_WithQueuedShieldEquip_ReturnsFalse()
+        {
+            var equipment = new Equipment();
+            var shield = TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.Shield, WeaponClass.SmallShield, maxDataValue: 120, bodyArmor: 12);
+            var commands = new List<TransferCommand>
+            {
+                TransferCommand.Transfer(
+                    1,
+                    InventoryLogic.InventorySide.PlayerInventory,
+                    InventoryLogic.InventorySide.BattleEquipment,
+                    new ItemRosterElement(TestItemFactory.ToElement(shield), 1),
+                    EquipmentIndex.None,
+                    EquipmentIndex.WeaponItemBeginSlot,
+                    null)
+            };
+
+            Assert.False(AutoEquipLogic.CanEquipAnotherShield(equipment, commands));
+        }
+
+        [Fact]
+        public void CanEquipAnotherCrossbow_WithQueuedCrossbowEquip_ReturnsFalse()
+        {
+            var equipment = new Equipment();
+            var crossbow = TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.Crossbow, WeaponClass.Crossbow, missileSpeed: 95);
+            var commands = new List<TransferCommand>
+            {
+                TransferCommand.Transfer(
+                    1,
+                    InventoryLogic.InventorySide.PlayerInventory,
+                    InventoryLogic.InventorySide.BattleEquipment,
+                    new ItemRosterElement(TestItemFactory.ToElement(crossbow), 1),
+                    EquipmentIndex.None,
+                    EquipmentIndex.WeaponItemBeginSlot,
+                    null)
+            };
+
+            Assert.False(AutoEquipLogic.CanEquipAnotherCrossbow(equipment, commands));
+        }
+
+        [Fact]
+        public void CanEquipAnotherBow_WithQueuedBowEquip_ReturnsFalse()
+        {
+            var equipment = new Equipment();
+            var bow = TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.Bow, WeaponClass.Bow, missileSpeed: 95);
+            var commands = new List<TransferCommand>
+            {
+                TransferCommand.Transfer(
+                    1,
+                    InventoryLogic.InventorySide.PlayerInventory,
+                    InventoryLogic.InventorySide.BattleEquipment,
+                    new ItemRosterElement(TestItemFactory.ToElement(bow), 1),
+                    EquipmentIndex.None,
+                    EquipmentIndex.WeaponItemBeginSlot,
+                    null)
+            };
+
+            Assert.False(AutoEquipLogic.CanEquipAnotherBow(equipment, commands));
         }
 
         [Fact]

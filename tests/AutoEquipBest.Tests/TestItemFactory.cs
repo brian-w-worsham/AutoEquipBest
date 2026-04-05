@@ -81,6 +81,32 @@ namespace AutoEquipBest.Tests
             return item;
         }
 
+        public static ItemObject CreateHorseItem(
+            int speed = 0,
+            int maneuver = 0,
+            int chargeDamage = 0,
+            int difficulty = 0,
+            int value = 100)
+        {
+            var item = new ItemObject($"test_horse_{_idCounter++}");
+            SetField(item, "Type", ItemTypeEnum.Horse);
+            SetBackingField(item, "Difficulty", difficulty);
+            SetBackingField(item, "Value", value);
+            SetBackingField(item, "TierfOverride", 0.1f);
+
+            var horse = new HorseComponent();
+            SetProperty(horse, "Item", item);
+            SetProperty(horse, "Speed", speed);
+            SetProperty(horse, "Maneuver", maneuver);
+            SetProperty(horse, "ChargeDamage", chargeDamage);
+            SetProperty(horse, "IsRideable", true);
+            SetProperty(horse, "IsPackAnimal", false);
+
+            SetBackingField(item, "ItemComponent", horse);
+
+            return item;
+        }
+
         public static ItemObject CreateSimpleItem(ItemTypeEnum itemType, int value = 100, int difficulty = 0)
         {
             var item = new ItemObject($"test_item_{_idCounter++}");
