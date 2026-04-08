@@ -1,0 +1,100 @@
+version=1
+
+# This file caches language service data to improve the performance of C# Dev Kit.
+# It is not intended for manual editing. It can safely be deleted and will be
+# regenerated automatically.
+#
+# To exclude from version control, add *.lscache to your .gitignore file.
+#
+# To disable caching, add the following to your VS Code settings:
+#   "dotnet.projectsystem.enableLanguageServiceCache": false
+
+[project]
+language=C#
+primary
+lastDtbSucceeded
+
+[properties]
+AssemblyName=AutoEquipBest
+CommandLineArgsForDesignTimeEvaluation=-langversion:9.0 -define:TRACE
+CompilerGeneratedFilesOutputPath=
+MaxSupportedLangVersion=7.3
+ProjectAssetsFile=<PATH>obj/project.assets.json
+RootNamespace=AutoEquipBest
+RunAnalyzers=
+RunAnalyzersDuringLiveAnalysis=
+SolutionPath=<PATH>../../AutoEquipBest.sln
+TargetFrameworkIdentifier=.NETFramework
+TargetPath=<PATH>bin/Debug/net472/AutoEquipBest.dll
+TargetRefPath=
+TemporaryDependencyNodeTargetIdentifier=net472
+
+[commandLineArguments]
+/noconfig
+/unsafe-
+/checked-
+/nowarn:1701,1702,1701,1702
+/fullpaths
+/nostdlib+
+/errorreport:prompt
+/warn:4
+/define:TRACE;DEBUG;NETFRAMEWORK;NET472;NET20_OR_GREATER;NET30_OR_GREATER;NET35_OR_GREATER;NET40_OR_GREATER;NET45_OR_GREATER;NET451_OR_GREATER;NET452_OR_GREATER;NET46_OR_GREATER;NET461_OR_GREATER;NET462_OR_GREATER;NET47_OR_GREATER;NET471_OR_GREATER;NET472_OR_GREATER
+/highentropyva+
+/nullable:disable
+/debug+
+/debug:portable
+/filealign:512
+/optimize-
+/out:obj\Debug\net472\AutoEquipBest.dll
+/subsystemversion:6.00
+/target:library
+/warnaserror-
+/utf8output
+/deterministic+
+/langversion:9.0
+/warnaserror+:NU1605
+
+[sourceFiles]
+AutoEquipLogic.cs
+obj/Debug/net472/
+ .NETFramework,Version=v4.7.2.AssemblyAttributes.cs
+ AutoEquipBest.AssemblyInfo.cs
+Patches/
+ GauntletInventoryScreenPatch.cs
+ InventoryHotkeyPatch.cs
+ SPInventoryVMPatch.cs
+SPInventoryMixin.cs
+SubModule.cs
+
+[metadataReferences]
+../../../../../../Games/steamapps/common/Mount & Blade II Bannerlord/bin/Win64_Shipping_Client/
+ TaleWorlds.CampaignSystem.dll
+ TaleWorlds.CampaignSystem.ViewModelCollection.dll
+ TaleWorlds.Core.dll
+ TaleWorlds.Engine.dll
+ TaleWorlds.Engine.GauntletUI.dll
+ TaleWorlds.GauntletUI.Data.dll
+ TaleWorlds.GauntletUI.dll
+ TaleWorlds.GauntletUI.ExtraWidgets.dll
+ TaleWorlds.InputSystem.dll
+ TaleWorlds.Library.dll
+ TaleWorlds.Localization.dll
+ TaleWorlds.MountAndBlade.dll
+ TaleWorlds.ObjectSystem.dll
+ TaleWorlds.ScreenSystem.dll
+<NETFXREF>/v4.7.2/
+ Facades/netstandard.dll
+ mscorlib.dll
+ System.Core.dll
+ System.Data.dll
+ System.dll
+ System.Drawing.dll
+ System.IO.Compression.FileSystem.dll
+ System.Numerics.dll
+ System.Runtime.Serialization.dll
+ System.Xml.dll
+ System.Xml.Linq.dll
+<NUGET>/lib.harmony/2.2.2/lib/net472/0Harmony.dll
+
+[analyzerConfigFiles]
+obj/Debug/net472/AutoEquipBest.GeneratedMSBuildEditorConfig.editorconfig
