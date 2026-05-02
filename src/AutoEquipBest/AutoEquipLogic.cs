@@ -921,8 +921,69 @@ namespace AutoEquipBest
                 return IsBodyArmorBetter(candidate, baseline);
             }
 
+            if (itemType == ItemTypeEnum.Horse)
+            {
+                candidateScore = bestScore;
+                return IsHorseBetter(candidate, baseline);
+            }
+
             candidateScore = ScoreItem(candidate, itemType);
             return candidateScore > bestScore;
+        }
+
+        /// <summary>
+        /// Compares two horses using strict stat priority:
+        /// speed, then maneuver, then hit points, then charge damage.
+        /// </summary>
+        /// <param name="candidate">The candidate horse element.</param>
+        /// <param name="baseline">The currently selected horse element.</param>
+        /// <returns><c>true</c> if the candidate horse should replace the baseline.</returns>
+        private static bool IsHorseBetter(EquipmentElement candidate, EquipmentElement baseline)
+        {
+            var candidateHorse = candidate.Item?.HorseComponent;
+            var baselineHorse = baseline.Item?.HorseComponent;
+
+            int candidateSpeed = candidateHorse?.Speed ?? 0;
+            int baselineSpeed = baselineHorse?.Speed ?? 0;
+            if (candidateSpeed != baselineSpeed)
+                return candidateSpeed > baselineSpeed;
+
+            int candidateManeuver = candidateHorse?.Maneuver ?? 0;
+            int baselineManeuver = baselineHorse?.Maneuver ?? 0;
+            if (candidateManeuver != baselineManeuver)
+                return candidateManeuver > baselineManeuver;
+
+            int candidateHitPoints = GetHorseHitPointsSafe(candidateHorse);
+            int baselineHitPoints = GetHorseHitPointsSafe(baselineHorse);
+            if (candidateHitPoints != baselineHitPoints)
+                return candidateHitPoints > baselineHitPoints;
+
+            int candidateChargeDamage = candidateHorse?.ChargeDamage ?? 0;
+            int baselineChargeDamage = baselineHorse?.ChargeDamage ?? 0;
+            if (candidateChargeDamage != baselineChargeDamage)
+                return candidateChargeDamage > baselineChargeDamage;
+
+            int candidateTier = GetItemTierSafe(candidate);
+            int baselineTier = GetItemTierSafe(baseline);
+            if (candidateTier != baselineTier)
+                return candidateTier > baselineTier;
+
+            return candidate.ItemValue > baseline.ItemValue;
+        }
+
+        /// <summary>
+        /// Safely resolves horse hit points.
+        /// Some synthetic test horses may not have all game data required by the getter.
+        /// </summary>
+        /// <param name="horse">The horse component to inspect.</param>
+        /// <returns>Resolved hit points, or 0 when unavailable.</returns>
+        private static int GetHorseHitPointsSafe(HorseComponent horse)
+        {
+            if (horse == null)
+                return 0;
+
+            try { return horse.HitPoints; }
+            catch { return 0; }
         }
 
         /// <summary>
@@ -1000,6 +1061,7 @@ namespace AutoEquipBest
                 case ItemTypeEnum.Horse:
                     return item.HorseComponent?.Speed ?? 0 +
                            (item.HorseComponent?.Maneuver ?? 0) * 0.5f +
+                           GetHorseHitPointsSafe(item.HorseComponent) * 0.3f +
                            (item.HorseComponent?.ChargeDamage ?? 0) * 0.3f;
                 case ItemTypeEnum.HorseHarness:
                     score = element.GetModifiedMountBodyArmor() * 10f;

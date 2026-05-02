@@ -84,6 +84,7 @@ namespace AutoEquipBest.Tests
         public static ItemObject CreateHorseItem(
             int speed = 0,
             int maneuver = 0,
+            int hitPoints = 0,
             int chargeDamage = 0,
             int difficulty = 0,
             int value = 100)
@@ -98,6 +99,7 @@ namespace AutoEquipBest.Tests
             SetProperty(horse, "Item", item);
             SetProperty(horse, "Speed", speed);
             SetProperty(horse, "Maneuver", maneuver);
+            SetProperty(horse, "HitPointBonus", hitPoints);
             SetProperty(horse, "ChargeDamage", chargeDamage);
             SetProperty(horse, "IsRideable", true);
             SetProperty(horse, "IsPackAnimal", false);

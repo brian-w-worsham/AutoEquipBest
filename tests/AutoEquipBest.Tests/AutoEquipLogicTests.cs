@@ -512,6 +512,57 @@ namespace AutoEquipBest.Tests
 
             Assert.Equal(strong, equipment[EquipmentIndex.Head].Item);
         }
+
+        [Fact]
+        public void EquipBestForSlot_HorsePrefersSpeedAboveAllOtherStats()
+        {
+            var equipment = new Equipment();
+            var roster = new ItemRoster();
+
+            var currentHorse = TestItemFactory.CreateHorseItem(speed: 50, maneuver: 80, hitPoints: 300, chargeDamage: 100);
+            var fasterHorse = TestItemFactory.CreateHorseItem(speed: 51, maneuver: 40, hitPoints: 50, chargeDamage: 10);
+
+            equipment[EquipmentIndex.Horse] = TestItemFactory.ToElement(currentHorse);
+            roster.AddToCounts(fasterHorse, 1);
+
+            AutoEquipLogic.EquipBestForSlot(equipment, roster, EquipmentIndex.Horse, ItemTypeEnum.Horse);
+
+            Assert.Equal(fasterHorse, equipment[EquipmentIndex.Horse].Item);
+        }
+
+        [Fact]
+        public void EquipBestForSlot_HorseUsesManeuverAsSecondPriority()
+        {
+            var equipment = new Equipment();
+            var roster = new ItemRoster();
+
+            var currentHorse = TestItemFactory.CreateHorseItem(speed: 50, maneuver: 60, hitPoints: 300, chargeDamage: 100);
+            var betterManeuverHorse = TestItemFactory.CreateHorseItem(speed: 50, maneuver: 61, hitPoints: 80, chargeDamage: 10);
+
+            equipment[EquipmentIndex.Horse] = TestItemFactory.ToElement(currentHorse);
+            roster.AddToCounts(betterManeuverHorse, 1);
+
+            AutoEquipLogic.EquipBestForSlot(equipment, roster, EquipmentIndex.Horse, ItemTypeEnum.Horse);
+
+            Assert.Equal(betterManeuverHorse, equipment[EquipmentIndex.Horse].Item);
+        }
+
+        [Fact]
+        public void EquipBestForSlot_HorseUsesChargeDamageAsFourthPriority()
+        {
+            var equipment = new Equipment();
+            var roster = new ItemRoster();
+
+            var currentHorse = TestItemFactory.CreateHorseItem(speed: 50, maneuver: 60, hitPoints: 120, chargeDamage: 30);
+            var betterChargeHorse = TestItemFactory.CreateHorseItem(speed: 50, maneuver: 60, hitPoints: 120, chargeDamage: 31);
+
+            equipment[EquipmentIndex.Horse] = TestItemFactory.ToElement(currentHorse);
+            roster.AddToCounts(betterChargeHorse, 1);
+
+            AutoEquipLogic.EquipBestForSlot(equipment, roster, EquipmentIndex.Horse, ItemTypeEnum.Horse);
+
+            Assert.Equal(betterChargeHorse, equipment[EquipmentIndex.Horse].Item);
+        }
     }
 
     public class AutoEquipLogicMountPreferenceTests
