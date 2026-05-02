@@ -90,7 +90,7 @@
     Post-build: Copy DLL to Bannerlord Modules folder for testing.
     Adjust the module path if needed.
   -->
-  <Target Name="CopyToModFolder" AfterTargets="Build">
+  <Target Name="CopyToModFolder" AfterTargets="Build" Condition="'$(SkipCopyToModFolder)' != 'true'">
     <PropertyGroup>
       <ModFolder>$(GameFolder)\Modules\AutoEquipBest\bin\Win64_Shipping_Client</ModFolder>
     </PropertyGroup>

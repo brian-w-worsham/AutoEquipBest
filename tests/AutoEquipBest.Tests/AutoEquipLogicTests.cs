@@ -195,6 +195,143 @@ namespace AutoEquipBest.Tests
         }
     }
 
+    public class AutoEquipLogicSwordPierceComparisonTests
+    {
+        [Fact]
+        public void IsBetterWeapon_CutOnlySword_VsCutAndPierceSword_IgnoresPierce()
+        {
+            // Cut+pierce sword: swing 90, thrust 80 -> normal score includes 80
+            // Cut-only sword: swing 110, thrust 0 -> normal score excludes 80
+            // With pierce included: cut+pierce wins (108+80=188 vs 132+0=132).
+            // With pierce excluded (the new rule): cut-only wins (132 vs 108).
+            var cutOnly = TestItemFactory.ToElement(TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.OneHandedWeapon, WeaponClass.OneHandedSword,
+                swingDamage: 110, thrustDamage: 0));
+            var cutAndPierce = TestItemFactory.ToElement(TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.OneHandedWeapon, WeaponClass.OneHandedSword,
+                swingDamage: 90, thrustDamage: 80));
+
+            float cutOnlyScore = AutoEquipLogic.ScoreWeapon(cutOnly, excludeThrust: true);
+            float cutAndPierceScore = AutoEquipLogic.ScoreWeapon(cutAndPierce, excludeThrust: true);
+            bool exclude = AutoEquipLogic.ShouldExcludeThrustForSwordPair(cutOnly, cutAndPierce);
+
+            Assert.True(AutoEquipLogic.IsBetterWeapon(cutOnly, cutAndPierce),
+                $"Cut-only({cutOnlyScore}) should beat cut+pierce({cutAndPierceScore}) when pierce is excluded (exclude={exclude}).");
+            Assert.False(AutoEquipLogic.IsBetterWeapon(cutAndPierce, cutOnly),
+                "Cut+pierce sword should not beat cut-only sword once pierce is excluded.");
+        }
+
+        [Fact]
+        public void IsBetterWeapon_BothSwordsHavePierce_ComparesNormally()
+        {
+            var swordA = TestItemFactory.ToElement(TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.OneHandedWeapon, WeaponClass.OneHandedSword,
+                swingDamage: 100, thrustDamage: 60));
+            var swordB = TestItemFactory.ToElement(TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.OneHandedWeapon, WeaponClass.OneHandedSword,
+                swingDamage: 100, thrustDamage: 80));
+
+            // Both have pierce -> rule does NOT apply; thrust counts.
+            Assert.True(AutoEquipLogic.IsBetterWeapon(swordB, swordA));
+            Assert.False(AutoEquipLogic.IsBetterWeapon(swordA, swordB));
+        }
+
+        [Fact]
+        public void IsBetterWeapon_NeitherSwordHasPierce_ComparesNormally()
+        {
+            var swordA = TestItemFactory.ToElement(TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.OneHandedWeapon, WeaponClass.OneHandedSword,
+                swingDamage: 100, thrustDamage: 0));
+            var swordB = TestItemFactory.ToElement(TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.OneHandedWeapon, WeaponClass.OneHandedSword,
+                swingDamage: 120, thrustDamage: 0));
+
+            Assert.True(AutoEquipLogic.IsBetterWeapon(swordB, swordA));
+            Assert.False(AutoEquipLogic.IsBetterWeapon(swordA, swordB));
+        }
+
+        [Fact]
+        public void IsBetterWeapon_TwoHandedSwords_AppliesPierceRule()
+        {
+            // Same scenario as 1H test, but for TwoHandedSword.
+            var cutOnly = TestItemFactory.ToElement(TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.TwoHandedWeapon, WeaponClass.TwoHandedSword,
+                swingDamage: 140, thrustDamage: 0));
+            var cutAndPierce = TestItemFactory.ToElement(TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.TwoHandedWeapon, WeaponClass.TwoHandedSword,
+                swingDamage: 120, thrustDamage: 90));
+
+            Assert.True(AutoEquipLogic.IsBetterWeapon(cutOnly, cutAndPierce));
+        }
+
+        [Fact]
+        public void IsBetterWeapon_NonSwordPair_DoesNotApplyPierceRule()
+        {
+            // Mace (no pierce) vs OneHandedSword (cut+pierce). Pierce rule must NOT trigger
+            // because the rule only applies when both weapons are swords.
+            var mace = TestItemFactory.ToElement(TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.OneHandedWeapon, WeaponClass.Mace,
+                swingDamage: 110, thrustDamage: 0));
+            var sword = TestItemFactory.ToElement(TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.OneHandedWeapon, WeaponClass.OneHandedSword,
+                swingDamage: 90, thrustDamage: 80));
+
+            // Sword score: 90*1.2 + 80 = 188. Mace score: 110*1.2 = 132. Sword wins.
+            Assert.True(AutoEquipLogic.IsBetterWeapon(sword, mace));
+            Assert.False(AutoEquipLogic.IsBetterWeapon(mace, sword));
+        }
+
+        [Fact]
+        public void ShouldExcludeThrustForSwordPair_OneSwordHasNoPierce_ReturnsTrue()
+        {
+            var cutOnly = TestItemFactory.ToElement(TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.OneHandedWeapon, WeaponClass.OneHandedSword,
+                swingDamage: 100, thrustDamage: 0));
+            var cutAndPierce = TestItemFactory.ToElement(TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.OneHandedWeapon, WeaponClass.OneHandedSword,
+                swingDamage: 100, thrustDamage: 50));
+
+            Assert.True(AutoEquipLogic.ShouldExcludeThrustForSwordPair(cutOnly, cutAndPierce));
+            Assert.True(AutoEquipLogic.ShouldExcludeThrustForSwordPair(cutAndPierce, cutOnly));
+        }
+
+        [Fact]
+        public void ShouldExcludeThrustForSwordPair_BothHaveOrLackPierce_ReturnsFalse()
+        {
+            var both1 = TestItemFactory.ToElement(TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.OneHandedWeapon, WeaponClass.OneHandedSword,
+                swingDamage: 100, thrustDamage: 30));
+            var both2 = TestItemFactory.ToElement(TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.OneHandedWeapon, WeaponClass.OneHandedSword,
+                swingDamage: 100, thrustDamage: 60));
+            var none1 = TestItemFactory.ToElement(TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.OneHandedWeapon, WeaponClass.OneHandedSword,
+                swingDamage: 100, thrustDamage: 0));
+            var none2 = TestItemFactory.ToElement(TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.OneHandedWeapon, WeaponClass.OneHandedSword,
+                swingDamage: 110, thrustDamage: 0));
+
+            Assert.False(AutoEquipLogic.ShouldExcludeThrustForSwordPair(both1, both2));
+            Assert.False(AutoEquipLogic.ShouldExcludeThrustForSwordPair(none1, none2));
+        }
+
+        [Fact]
+        public void ScoreWeapon_ExcludeThrust_OmitsThrustDamageAndSpeed()
+        {
+            var item = TestItemFactory.CreateWeaponItem(
+                ItemTypeEnum.OneHandedWeapon, WeaponClass.OneHandedSword,
+                swingDamage: 100, thrustDamage: 80,
+                swingSpeed: 90, thrustSpeed: 80);
+            var element = TestItemFactory.ToElement(item);
+
+            float withThrust = AutoEquipLogic.ScoreWeapon(element);
+            float withoutThrust = AutoEquipLogic.ScoreWeapon(element, excludeThrust: true);
+
+            // Difference should equal ThrustDamage*1.0 + ThrustSpeed*0.3 = 80 + 24 = 104.
+            Assert.Equal(104f, withThrust - withoutThrust, 3);
+        }
+    }
+
     public class AutoEquipLogicIsWeaponTypeTests
     {
         [Theory]
@@ -379,15 +516,6 @@ namespace AutoEquipBest.Tests
 
     public class AutoEquipLogicMountPreferenceTests
     {
-        [Theory]
-        [InlineData(40, 80, true)]
-        [InlineData(80, 40, false)]
-        [InlineData(60, 60, false)]
-        public void ShouldEquipMount_ReturnsExpected(int athleticsSkill, int ridingSkill, bool expected)
-        {
-            Assert.Equal(expected, AutoEquipLogic.ShouldEquipMount(athleticsSkill, ridingSkill));
-        }
-
         [Fact]
         public void ApplyMountPreference_MountsNotPreferred_RemovesHorseAndHarness()
         {

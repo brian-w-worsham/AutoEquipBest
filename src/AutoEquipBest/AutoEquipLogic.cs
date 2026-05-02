@@ -40,7 +40,10 @@ namespace AutoEquipBest
             EquipBestForSlot(equipment, partyInventory, EquipmentIndex.Cape, ItemTypeEnum.Cape, hero);
 
             // --- Horse ---
-            ApplyMountPreference(equipment, partyInventory, ShouldEquipMount(hero), hero);
+            // Preserve the hero's current mount preference: if they have a horse equipped keep
+            // them mounted (upgrading to best available mount they qualify for); otherwise don't
+            // equip one.
+            ApplyMountPreference(equipment, partyInventory, !equipment[EquipmentIndex.Horse].IsEmpty, hero);
 
             // --- Weapons (slots 0-3) ---
             EquipBestWeapons(equipment, partyInventory, hero);
@@ -89,7 +92,7 @@ namespace AutoEquipBest
             CollectSlotCommands(commands, available, equipment, character, EquipmentIndex.Leg, ItemTypeEnum.LegArmor, hero);
             CollectSlotCommands(commands, available, equipment, character, EquipmentIndex.Gloves, ItemTypeEnum.HandArmor, hero);
             CollectSlotCommands(commands, available, equipment, character, EquipmentIndex.Cape, ItemTypeEnum.Cape, hero);
-            ApplyMountPreferenceViaInventory(commands, available, equipment, character, ShouldEquipMount(hero), hero);
+            ApplyMountPreferenceViaInventory(commands, available, equipment, character, !equipment[EquipmentIndex.Horse].IsEmpty, hero);
 
             // --- Weapons ---
             CollectWeaponCommands(commands, available, equipment, character, hero);
@@ -255,7 +258,7 @@ namespace AutoEquipBest
 
                 var weaponClass = GetPrimaryWeaponClass(current.Item);
                 int bestIdx = FindBestAvailableWeapon(
-                    available, hero, ScoreWeapon(current), weaponClass);
+                    available, hero, current, weaponClass);
                 if (bestIdx >= 0)
                     TransferSwapWeapon(commands, available, current, bestIdx, slot, character);
             }
@@ -268,7 +271,7 @@ namespace AutoEquipBest
                 bool allowShield = CanEquipAnotherShield(equipment, commands);
                     bool allowCrossbow = CanEquipAnotherCrossbow(equipment, commands);
                     bool allowBow = CanEquipAnotherBow(equipment, commands);
-                    int bestIdx = FindBestAvailableWeapon(available, hero, -1f, null, allowShield, allowCrossbow, allowBow);
+                    int bestIdx = FindBestAvailableWeapon(available, hero, default, null, allowShield, allowCrossbow, allowBow);
                 if (bestIdx >= 0)
                     TransferEquipWeapon(commands, available, bestIdx, slot, character);
             }
@@ -283,28 +286,28 @@ namespace AutoEquipBest
         /// </summary>
         /// <param name="available">Snapshot of available inventory items with remaining counts.</param>
         /// <param name="hero">The hero used for skill-based usability checks.</param>
-        /// <param name="minScore">The minimum score a candidate must exceed to be selected.</param>
+        /// <param name="baseline">The current/baseline weapon element to beat. Pass <c>default</c> when filling an empty slot.</param>
         /// <param name="requiredClass">If set, only weapons with this primary weapon class are considered; otherwise any weapon type is accepted.</param>
         /// <returns>The index into <paramref name="available"/> of the best weapon, or -1 if none qualifies.</returns>
         private static int FindBestAvailableWeapon(
             List<(ItemRosterElement element, int remaining)> available,
             Hero hero,
-            float minScore,
+            EquipmentElement baseline,
             WeaponClass? requiredClass,
             bool allowShield = true,
             bool allowCrossbow = true,
             bool allowBow = true)
         {
             int bestIdx = -1;
-            float bestScore = minScore;
+            EquipmentElement currentBest = baseline;
 
             foreach (var candidate in EnumerateAvailableWeaponCandidates(available, hero, requiredClass, allowShield, allowCrossbow, allowBow))
             {
-                float score = ScoreWeapon(candidate.element.EquipmentElement);
-                if (score <= bestScore)
+                var candidateElement = candidate.element.EquipmentElement;
+                if (!IsBetterWeapon(candidateElement, currentBest))
                     continue;
 
-                bestScore = score;
+                currentBest = candidateElement;
                 bestIdx = candidate.index;
             }
 
@@ -459,7 +462,7 @@ namespace AutoEquipBest
             List<(ItemRosterElement element, int remaining)> available, Hero hero)
         {
             int bestIdx = -1;
-            float bestScore = -1f;
+            EquipmentElement currentBest = default;
             for (int i = 0; i < available.Count; i++)
             {
                 var (el, remaining) = available[i];
@@ -468,12 +471,11 @@ namespace AutoEquipBest
                 if (!IsMeleeWeaponType(item.ItemType)) continue;
                 if (!CanCharacterUseItem(item, hero)) continue;
 
-                float score = ScoreWeapon(el.EquipmentElement);
-                if (score > bestScore)
-                {
-                    bestScore = score;
-                    bestIdx = i;
-                }
+                if (!IsBetterWeapon(el.EquipmentElement, currentBest))
+                    continue;
+
+                currentBest = el.EquipmentElement;
+                bestIdx = i;
             }
             return bestIdx;
         }
@@ -625,7 +627,7 @@ namespace AutoEquipBest
 
                 var weaponClass = GetPrimaryWeaponClass(current.Item);
                 int bestIndex = FindBestInRoster(
-                    roster, hero, ScoreWeapon(current), weaponClass);
+                    roster, hero, current, weaponClass);
                 if (bestIndex >= 0)
                     DirectSwapWeapon(equipment, roster, current, bestIndex, slot);
             }
@@ -638,7 +640,7 @@ namespace AutoEquipBest
                 bool allowShield = CanEquipAnotherShield(equipment);
                 bool allowCrossbow = CanEquipAnotherCrossbow(equipment);
                 bool allowBow = CanEquipAnotherBow(equipment);
-                int bestIndex = FindBestInRoster(roster, hero, -1f, null, allowShield, allowCrossbow, allowBow);
+                int bestIndex = FindBestInRoster(roster, hero, default, null, allowShield, allowCrossbow, allowBow);
                 if (bestIndex >= 0)
                     DirectEquipWeapon(equipment, roster, bestIndex, slot);
             }
@@ -653,28 +655,28 @@ namespace AutoEquipBest
         /// </summary>
         /// <param name="roster">The party item roster to search.</param>
         /// <param name="hero">The hero used for skill-based usability checks.</param>
-        /// <param name="minScore">The minimum score a candidate must exceed to be selected.</param>
+        /// <param name="baseline">The current/baseline weapon element to beat. Pass <c>default</c> when filling an empty slot.</param>
         /// <param name="requiredClass">If set, only weapons with this primary weapon class are considered; otherwise any weapon type is accepted.</param>
         /// <returns>The index into <paramref name="roster"/> of the best weapon, or -1 if none qualifies.</returns>
         private static int FindBestInRoster(
             ItemRoster roster,
             Hero hero,
-            float minScore,
+            EquipmentElement baseline,
             WeaponClass? requiredClass,
             bool allowShield = true,
             bool allowCrossbow = true,
             bool allowBow = true)
         {
             int bestIndex = -1;
-            float bestScore = minScore;
+            EquipmentElement currentBest = baseline;
 
             foreach (var candidate in EnumerateRosterWeaponCandidates(roster, hero, requiredClass, allowShield, allowCrossbow, allowBow))
             {
-                float score = ScoreWeapon(candidate.element.EquipmentElement);
-                if (score <= bestScore)
+                var candidateElement = candidate.element.EquipmentElement;
+                if (!IsBetterWeapon(candidateElement, currentBest))
                     continue;
 
-                bestScore = score;
+                currentBest = candidateElement;
                 bestIndex = candidate.index;
             }
 
@@ -838,7 +840,7 @@ namespace AutoEquipBest
         private static int FindBestMeleeInRoster(ItemRoster roster, Hero hero)
         {
             int bestIdx = -1;
-            float bestScore = -1f;
+            EquipmentElement currentBest = default;
             for (int i = 0; i < roster.Count; i++)
             {
                 var el = roster[i];
@@ -847,12 +849,11 @@ namespace AutoEquipBest
                 if (item == null || !IsMeleeWeaponType(item.ItemType)) continue;
                 if (!CanCharacterUseItem(item, hero)) continue;
 
-                float score = ScoreWeapon(el.EquipmentElement);
-                if (score > bestScore)
-                {
-                    bestScore = score;
-                    bestIdx = i;
-                }
+                if (!IsBetterWeapon(el.EquipmentElement, currentBest))
+                    continue;
+
+                currentBest = el.EquipmentElement;
+                bestIdx = i;
             }
             return bestIdx;
         }
@@ -1023,8 +1024,11 @@ namespace AutoEquipBest
         /// A weight penalty is applied so lighter weapons score higher.
         /// </summary>
         /// <param name="element">The weapon equipment element to score.</param>
+        /// <param name="excludeThrust">When <c>true</c>, thrust (pierce) damage and thrust speed
+        /// are excluded from the general weapon formula. Used by the pairwise sword comparison
+        /// rule that ignores pierce damage when only one of the two swords has it.</param>
         /// <returns>A numeric score, or -1 if the element is empty.</returns>
-        internal static float ScoreWeapon(EquipmentElement element)
+        internal static float ScoreWeapon(EquipmentElement element, bool excludeThrust = false)
         {
             if (element.IsEmpty || element.Item == null)
                 return -1f;
@@ -1063,15 +1067,20 @@ namespace AutoEquipBest
 
             // General weapon formula
             score += element.GetModifiedSwingDamageForUsage(0) * 1.2f;
-            score += element.GetModifiedThrustDamageForUsage(0) * 1.0f;
+            if (!excludeThrust)
+                score += element.GetModifiedThrustDamageForUsage(0) * 1.0f;
             score += element.GetModifiedSwingSpeedForUsage(0) * 0.3f;
-            score += element.GetModifiedThrustSpeedForUsage(0) * 0.3f;
+            if (!excludeThrust)
+                score += element.GetModifiedThrustSpeedForUsage(0) * 0.3f;
             score += primary.WeaponLength * 0.2f;
             score += element.GetModifiedHandlingForUsage(0) * 0.2f;
 
-            // Ranged bonus
-            score += element.GetModifiedMissileSpeedForUsage(0) * 0.5f;
-            score += element.GetModifiedMissileDamageForUsage(0) * 1.0f;
+            // Ranged bonus (only meaningful for ranged weapon types)
+            if (IsRangedItemType(item.ItemType))
+            {
+                score += element.GetModifiedMissileSpeedForUsage(0) * 0.5f;
+                score += element.GetModifiedMissileDamageForUsage(0) * 1.0f;
+            }
 
             // Tier bonus
             try { score += (int)item.Tier * 10f; } catch { /* Tier unavailable outside game */ }
@@ -1080,6 +1089,61 @@ namespace AutoEquipBest
             score -= element.Weight * 0.5f;
 
             return score;
+        }
+
+        /// <summary>
+        /// Determines whether the weapon class represents a sword (one or two handed).
+        /// </summary>
+        /// <param name="weaponClass">The weapon class to inspect.</param>
+        /// <returns><c>true</c> for one- or two-handed swords; otherwise <c>false</c>.</returns>
+        internal static bool IsSwordClass(WeaponClass weaponClass)
+        {
+            return weaponClass == WeaponClass.OneHandedSword
+                || weaponClass == WeaponClass.TwoHandedSword;
+        }
+
+        /// <summary>
+        /// Determines whether thrust (pierce) damage should be excluded when comparing two
+        /// weapons. The exclusion only applies when both weapons are swords (one or two handed)
+        /// and exactly one of them has zero thrust damage. In that case, neither weapon's
+        /// thrust contribution should influence the comparison.
+        /// </summary>
+        /// <param name="a">First weapon element.</param>
+        /// <param name="b">Second weapon element.</param>
+        /// <returns><c>true</c> if thrust should be excluded from both weapons' scores during comparison.</returns>
+        internal static bool ShouldExcludeThrustForSwordPair(EquipmentElement a, EquipmentElement b)
+        {
+            if (a.IsEmpty || b.IsEmpty) return false;
+            if (a.Item?.WeaponComponent?.PrimaryWeapon == null) return false;
+            if (b.Item?.WeaponComponent?.PrimaryWeapon == null) return false;
+
+            if (!IsSwordClass(a.Item.WeaponComponent.PrimaryWeapon.WeaponClass)) return false;
+            if (!IsSwordClass(b.Item.WeaponComponent.PrimaryWeapon.WeaponClass)) return false;
+
+            int aThrust = a.GetModifiedThrustDamageForUsage(0);
+            int bThrust = b.GetModifiedThrustDamageForUsage(0);
+            return (aThrust == 0) != (bThrust == 0);
+        }
+
+        /// <summary>
+        /// Determines whether <paramref name="candidate"/> is a better weapon than
+        /// <paramref name="baseline"/>. When both items are swords and only one has pierce
+        /// (thrust) damage, thrust is excluded from both sides of the comparison.
+        /// </summary>
+        /// <param name="candidate">The candidate weapon element.</param>
+        /// <param name="baseline">The current best weapon element to compare against (may be empty).</param>
+        /// <returns><c>true</c> if <paramref name="candidate"/> beats <paramref name="baseline"/>.</returns>
+        internal static bool IsBetterWeapon(EquipmentElement candidate, EquipmentElement baseline)
+        {
+            if (candidate.IsEmpty || candidate.Item == null)
+                return false;
+            if (baseline.IsEmpty || baseline.Item == null)
+                return ScoreWeapon(candidate) > -1f;
+
+            bool excludeThrust = ShouldExcludeThrustForSwordPair(candidate, baseline);
+            float candidateScore = ScoreWeapon(candidate, excludeThrust);
+            float baselineScore = ScoreWeapon(baseline, excludeThrust);
+            return candidateScore > baselineScore;
         }
 
         /// <summary>
@@ -1111,6 +1175,24 @@ namespace AutoEquipBest
                 case ItemTypeEnum.Arrows:
                 case ItemTypeEnum.Bolts:
                 case ItemTypeEnum.Shield:
+                case ItemTypeEnum.Thrown:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        /// <summary>
+        /// Determines whether the given item type is a ranged weapon (bow, crossbow, or thrown).
+        /// </summary>
+        /// <param name="type">The item type to check.</param>
+        /// <returns><c>true</c> if the type is a ranged weapon; otherwise <c>false</c>.</returns>
+        internal static bool IsRangedItemType(ItemTypeEnum type)
+        {
+            switch (type)
+            {
+                case ItemTypeEnum.Bow:
+                case ItemTypeEnum.Crossbow:
                 case ItemTypeEnum.Thrown:
                     return true;
                 default:
@@ -1221,82 +1303,6 @@ namespace AutoEquipBest
             }
 
             return false;
-        }
-
-        /// <summary>
-        /// Determines whether a character should equip a mount based on Athletics and Riding.
-        /// Riding must be strictly higher than Athletics to keep a horse and harness equipped.
-        /// </summary>
-        /// <param name="athleticsSkill">The Athletics skill value.</param>
-        /// <param name="ridingSkill">The Riding skill value.</param>
-        /// <returns><c>true</c> if the character should equip a horse and harness; otherwise <c>false</c>.</returns>
-        internal static bool ShouldEquipMount(int athleticsSkill, int ridingSkill)
-        {
-            return ridingSkill > athleticsSkill;
-        }
-
-        /// <summary>
-        /// Determines whether a hero should equip a mount based on Athletics and Riding.
-        /// If the required skill objects are unavailable, preserves the previous behavior and allows mounts.
-        /// </summary>
-        /// <param name="hero">The hero to inspect.</param>
-        /// <returns><c>true</c> if the hero should equip a horse and harness; otherwise <c>false</c>.</returns>
-        private static bool ShouldEquipMount(Hero hero)
-        {
-            if (hero == null)
-                return true;
-
-            if (!TryGetHeroSkill(hero, GetAthleticsSkillSafe(), out int athleticsSkill))
-                return true;
-
-            if (!TryGetHeroSkill(hero, GetRidingSkillSafe(), out int ridingSkill))
-                return true;
-
-            return ShouldEquipMount(athleticsSkill, ridingSkill);
-        }
-
-        /// <summary>
-        /// Safely resolves the Athletics skill object when the default skill registry is initialized.
-        /// </summary>
-        /// <returns>The Athletics skill object, or <c>null</c> if it is unavailable.</returns>
-        private static SkillObject GetAthleticsSkillSafe()
-        {
-            try { return DefaultSkills.Athletics; }
-            catch { return null; }
-        }
-
-        /// <summary>
-        /// Safely resolves the Riding skill object when the default skill registry is initialized.
-        /// </summary>
-        /// <returns>The Riding skill object, or <c>null</c> if it is unavailable.</returns>
-        private static SkillObject GetRidingSkillSafe()
-        {
-            try { return DefaultSkills.Riding; }
-            catch { return null; }
-        }
-
-        /// <summary>
-        /// Reads a hero skill value without assuming the Bannerlord skill registry is initialized.
-        /// </summary>
-        /// <param name="hero">The hero whose skill value should be read.</param>
-        /// <param name="skill">The skill object to query.</param>
-        /// <param name="skillValue">The resolved skill value when available.</param>
-        /// <returns><c>true</c> if the skill value could be read; otherwise <c>false</c>.</returns>
-        private static bool TryGetHeroSkill(Hero hero, SkillObject skill, out int skillValue)
-        {
-            skillValue = 0;
-            if (hero == null || skill == null)
-                return false;
-
-            try
-            {
-                skillValue = hero.GetSkillValue(skill);
-                return true;
-            }
-            catch
-            {
-                return false;
-            }
         }
 
         /// <summary>
